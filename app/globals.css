@@ -2511,7 +2511,7 @@ select {
   .topbar,
   .stepper,
   .result-actions,
-  .quote-panel .button,
+  .quote-panel,
   .footer {
     display: none !important;
   }

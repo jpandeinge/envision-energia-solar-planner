@@ -105,14 +105,15 @@ test("keeps the supplier comparison readable without horizontal scrolling", asyn
   assert.doesNotMatch(styles, /\.supplier-table \{[\s\S]{0,120}min-width: 1060px/);
 });
 
-test("explains the print action in plain language", async () => {
-  const planner = await readFile(
-    new URL("../app/solar-planner.tsx", import.meta.url),
-    "utf8",
-  );
+test("keeps the print action on screen but removes its prompt from the PDF", async () => {
+  const [planner, styles] = await Promise.all([
+    readFile(new URL("../app/solar-planner.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
 
   assert.match(planner, /Save your solar planning brief\./);
   assert.match(planner, /Print or save as PDF/);
   assert.match(planner, /window\.print\(\)/);
   assert.doesNotMatch(planner, /Turn this plan into comparable quotes\./);
+  assert.match(styles, /@media print \{[\s\S]*?\.quote-panel,[\s\S]*?display: none !important;/);
 });
