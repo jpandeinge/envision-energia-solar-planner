@@ -55,6 +55,7 @@ test("keeps supplier evidence and product metadata in the app", async () => {
   assert.match(planner, /gm_authFailure/);
   assert.match(planner, /tilesloaded/);
   assert.match(planner, /Satellite map temporarily unavailable/);
+  assert.match(planner, /Search temporarily unavailable/);
   assert.match(planner, /`N\$\$\{nadNumber\.format\(value\)\}`/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /\/og\.png/);
