@@ -8,11 +8,28 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  BATTERY_DEPTH_OF_DISCHARGE,
+  BATTERY_DESIGN_RESERVE,
+  BATTERY_PATH_EFFICIENCY,
+  calculateSolarPlan,
+  DC_AC_RATIO,
+  ENGINE_VERSION,
+  LAYOUT_PACKING_EFFICIENCY,
+  type InstallationType,
+  type SolarGoal,
+  SPECIFIC_YIELD_KWH_PER_KWP,
+  type SupplyPhase,
+} from "./solar-calculator";
+import {
+  CATALOGUE_VERSION,
+  PUBLIC_SYSTEM_OFFERS,
+  REFERENCE_PANEL,
+  SUPPLIER_PANEL_OFFERS,
+} from "./solar-catalogue";
 
 type Point = { x: number; y: number };
 type GeoPoint = { lat: number; lng: number };
-type Goal = "grid" | "hybrid" | "offgrid";
-type InstallType = "roof" | "ground";
 type SurfaceSnapshot = {
   points: Point[];
   geoPoints: GeoPoint[];
@@ -85,10 +102,6 @@ declare global {
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 520;
 const METRES_PER_PIXEL = 0.052;
-const PANEL_WIDTH_METRES = 1.134;
-const PANEL_HEIGHT_METRES = 2.278;
-const PANEL_POWER_WATTS = 590;
-const SPECIFIC_YIELD = 1720;
 
 const defaultSurface: Point[] = [
   { x: 250, y: 145 },
@@ -116,7 +129,8 @@ const steps = [
 
 const nadNumber = new Intl.NumberFormat("en-NA", {
   style: "decimal",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 
 const money = {
@@ -128,6 +142,20 @@ const money = {
 const number = new Intl.NumberFormat("en-NA", {
   maximumFractionDigits: 1,
 });
+
+const decimal = new Intl.NumberFormat("en-NA", {
+  maximumFractionDigits: 2,
+});
+
+const verifiedDate = new Intl.DateTimeFormat("en-NA", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+function formatObservedAt(value: string) {
+  return verifiedDate.format(new Date(`${value}T12:00:00+02:00`));
+}
 
 function polygonArea(points: Point[]) {
   if (points.length < 3) return 0;
@@ -318,21 +346,23 @@ function pointInPolygon(point: Point, polygon: Point[]) {
   return inside;
 }
 
-function chooseInverter(requiredKw: number) {
-  const sizes = [3.6, 5, 8, 12, 16, 20];
-  return sizes.find((size) => size >= requiredKw) ?? 20;
-}
-
-function ceilToBatteryModule(kwh: number) {
-  if (kwh <= 0) return 0;
-  return Math.ceil(kwh / 5.12) * 5.12;
-}
-
 function SolarMark() {
   return (
     <span className="solar-mark" aria-hidden="true">
       <span>ϟ</span>
     </span>
+  );
+}
+
+function FieldHelp({ title, children }: { title: string; children: string }) {
+  return (
+    <details className="field-help">
+      <summary aria-label={`Explain ${title}`}>
+        <span aria-hidden="true">?</span>
+        <span>Help</span>
+      </summary>
+      <p>{children}</p>
+    </details>
   );
 }
 
@@ -351,7 +381,7 @@ function SiteCanvas({
   closed: boolean;
   setClosed: (closed: boolean) => void;
   drawing: boolean;
-  installType: InstallType;
+  installType: InstallationType;
   panelCount: number;
   showPanels: boolean;
 }) {
@@ -540,7 +570,7 @@ function HybridMap({
   setClosed: (closed: boolean) => void;
   drawing: boolean;
   editable: boolean;
-  installType: InstallType;
+  installType: InstallationType;
   panelCount?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -722,15 +752,15 @@ export function SolarPlanner() {
   const [editingSurface, setEditingSurface] = useState(false);
   const [discardedSurface, setDiscardedSurface] =
     useState<SurfaceSnapshot | null>(null);
-  const [installType, setInstallType] = useState<InstallType>("roof");
+  const [installType, setInstallType] = useState<InstallationType>("roof");
   const [latitude, setLatitude] = useState("-22.5609");
   const [longitude, setLongitude] = useState("17.0658");
   const [locationName, setLocationName] = useState("Klein Windhoek, Namibia");
   const [pitch, setPitch] = useState(18);
   const [monthlyKwh, setMonthlyKwh] = useState(620);
   const [monthlyBill, setMonthlyBill] = useState(1650);
-  const [goal, setGoal] = useState<Goal>("hybrid");
-  const [phase, setPhase] = useState("Single phase");
+  const [goal, setGoal] = useState<SolarGoal>("hybrid");
+  const [phase, setPhase] = useState<SupplyPhase>("Single phase");
   const [breaker, setBreaker] = useState(60);
   const [backupHours, setBackupHours] = useState(6);
   const [criticalLoad, setCriticalLoad] = useState(1.8);
@@ -756,54 +786,23 @@ export function SolarPlanner() {
     geoPoints.length >= 3
       ? geographicPolygonArea(geoPoints)
       : polygonArea(points);
-  const usableRatio = installType === "roof" ? 0.78 : 0.85;
-  const usableArea = rawArea * usableRatio;
-  const panelArea = PANEL_WIDTH_METRES * PANEL_HEIGHT_METRES * 1.16;
-  const maxPanels = Math.max(0, Math.floor(usableArea / panelArea));
   const pointCount = geoPoints.length || points.length;
 
   const results = useMemo(() => {
-    const targetShare = goal === "grid" ? 0.76 : goal === "hybrid" ? 0.92 : 1.15;
-    const neededKwp = (monthlyKwh * 12 * targetShare) / SPECIFIC_YIELD;
-    const neededPanels = Math.max(1, Math.ceil((neededKwp * 1000) / PANEL_POWER_WATTS));
-    const panels = Math.min(neededPanels, maxPanels || neededPanels);
-    const capacityKwp = (panels * PANEL_POWER_WATTS) / 1000;
-    const annualGeneration = capacityKwp * SPECIFIC_YIELD;
-    const coverage = Math.min(135, (annualGeneration / (monthlyKwh * 12)) * 100);
-    const batteryRaw =
-      goal === "grid"
-        ? 0
-        : goal === "hybrid"
-          ? (criticalLoad * backupHours) / (0.9 * 0.92)
-          : (monthlyKwh / 30) * 1.25;
-    const batteryKwh = ceilToBatteryModule(batteryRaw);
-    const inverterKw = chooseInverter(Math.max(capacityKwp / 1.25, criticalLoad * 1.15));
-    const panelSubtotal = panels * 2115;
-    const inverterAllowance = 10500 + inverterKw * 1850;
-    const batteryAllowance = batteryKwh * 3850;
-    const balanceOfSystem = panels * 1080;
-    const installationAllowance = 9500 + capacityKwp * 900;
-    const midpoint =
-      panelSubtotal +
-      inverterAllowance +
-      batteryAllowance +
-      balanceOfSystem +
-      installationAllowance;
-
-    return {
-      neededPanels,
-      panels,
-      capacityKwp,
-      annualGeneration,
-      coverage,
-      batteryKwh,
-      inverterKw,
-      midpoint,
-      lowBudget: midpoint * 0.88,
-      highBudget: midpoint * 1.14,
-      constrained: maxPanels > 0 && neededPanels > maxPanels,
-    };
-  }, [backupHours, criticalLoad, goal, maxPanels, monthlyKwh]);
+    return calculateSolarPlan({
+      rawAreaM2: rawArea,
+      installType,
+      monthlyKwh,
+      goal,
+      phase,
+      breakerAmps: breaker,
+      backupHours,
+      criticalLoadKw: criticalLoad,
+    });
+  }, [backupHours, breaker, criticalLoad, goal, installType, monthlyKwh, phase, rawArea]);
+  const usableArea = results.usableAreaM2;
+  const maxPanels = results.maxPanels;
+  const panelArea = results.panelFootprintM2;
 
   const resetSurface = useCallback(() => {
     const currentSurface = surfaceRef.current;
@@ -922,9 +921,28 @@ export function SolarPlanner() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const panelPriceMegabuild = results.panels * 2115;
-  const electroPanelCount = Math.ceil((results.capacityKwp * 1000) / 500);
-  const electroPanelPrice = electroPanelCount * 1725;
+  const energyProfileValid =
+    monthlyKwh >= 50 &&
+    monthlyKwh <= 10000 &&
+    monthlyBill >= 0 &&
+    breaker >= 10 &&
+    breaker <= 400 &&
+    (goal === "grid" ||
+      (backupHours >= 1 &&
+        backupHours <= 72 &&
+        criticalLoad >= 0.2 &&
+        criticalLoad <= 20));
+  const supplierComparisons = SUPPLIER_PANEL_OFFERS.map((offer) => {
+    const equivalentCount = Math.ceil(
+      (results.capacityKwp * 1000) / offer.powerWatts,
+    );
+    return {
+      ...offer,
+      equivalentCount,
+      subtotalNad:
+        offer.priceNad === null ? null : equivalentCount * offer.priceNad,
+    };
+  });
 
   return (
     <main className="app-shell">
@@ -1087,22 +1105,25 @@ export function SolarPlanner() {
               </div>
 
               <div className="coordinate-grid">
-                <label>Latitude<input value={latitude} onChange={(event) => setLatitude(event.target.value)} inputMode="decimal" /></label>
-                <label>Longitude<input value={longitude} onChange={(event) => setLongitude(event.target.value)} inputMode="decimal" /></label>
+                <label htmlFor="latitude">Latitude<input id="latitude" name="latitude" value={latitude} onChange={(event) => setLatitude(event.target.value)} inputMode="decimal" /></label>
+                <label htmlFor="longitude">Longitude<input id="longitude" name="longitude" value={longitude} onChange={(event) => setLongitude(event.target.value)} inputMode="decimal" /></label>
               </div>
               {locationMessage ? <p className="form-message" role="status">{locationMessage}</p> : null}
 
               {installType === "roof" ? (
-                <label className="field-label">
-                  Approximate roof pitch
-                  <select value={pitch} onChange={(event) => setPitch(Number(event.target.value))}>
+                <div className="metric-field field-label">
+                  <div className="field-label-row">
+                    <label htmlFor="roof-pitch">Approximate roof pitch</label>
+                    <FieldHelp title="roof pitch">Pitch affects mounting, access and final solar production. This first estimate records it, but a site survey must verify the angle and roof structure.</FieldHelp>
+                  </div>
+                  <select id="roof-pitch" name="roofPitch" value={pitch} onChange={(event) => setPitch(Number(event.target.value))}>
                     <option value={5}>Almost flat · 5°</option>
                     <option value={12}>Low pitch · 12°</option>
                     <option value={18}>Typical pitch · 18°</option>
                     <option value={25}>Steep pitch · 25°</option>
                     <option value={35}>Very steep · 35°</option>
                   </select>
-                </label>
+                </div>
               ) : null}
 
               <div className="surface-summary">
@@ -1114,7 +1135,7 @@ export function SolarPlanner() {
               <button className="button button-primary button-full" type="button" disabled={!closed || editingSurface || rawArea < 10} onClick={() => goToStep(2)}>
                 Continue to energy use <span>→</span>
               </button>
-              <p className="fine-print">A 22% roof allowance covers edges, access paths and small obstructions. Refine it during a site survey.</p>
+              <p className="fine-print">A {Math.round(results.surfaceAllowance * 100)}% {installType} allowance covers edges, access paths and small obstructions; a further {Math.round((1 - LAYOUT_PACKING_EFFICIENCY) * 100)}% layout factor covers row packing. Refine both during a site survey.</p>
             </aside>
           </section>
         ) : null}
@@ -1127,14 +1148,18 @@ export function SolarPlanner() {
               <h2 id="energy-title">What should solar do for you?</h2>
               <p className="section-copy">A recent electricity bill gives the most reliable first estimate.</p>
 
+              <div className="input-section-heading energy-goal-heading">
+                <strong>Solar goal</strong>
+                <FieldHelp title="solar goal">Your goal sets the annual solar-energy target. Backup options also size an LFP battery from essential-load power and runtime.</FieldHelp>
+              </div>
               <div className="goal-grid" role="group" aria-label="Solar goal">
-                <button className={goal === "grid" ? "goal-card is-selected" : "goal-card"} type="button" onClick={() => setGoal("grid")}>
+                <button className={goal === "grid" ? "goal-card is-selected" : "goal-card"} type="button" aria-pressed={goal === "grid"} onClick={() => setGoal("grid")}>
                   <span className="goal-icon">↘</span><strong>Reduce my bill</strong><small>Grid-tied, focused on daytime savings</small>
                 </button>
-                <button className={goal === "hybrid" ? "goal-card is-selected" : "goal-card"} type="button" onClick={() => setGoal("hybrid")}>
+                <button className={goal === "hybrid" ? "goal-card is-selected" : "goal-card"} type="button" aria-pressed={goal === "hybrid"} onClick={() => setGoal("hybrid")}>
                   <span className="goal-icon">ϟ</span><strong>Save + backup</strong><small>Hybrid solar with essential-load backup</small>
                 </button>
-                <button className={goal === "offgrid" ? "goal-card is-selected" : "goal-card"} type="button" onClick={() => setGoal("offgrid")}>
+                <button className={goal === "offgrid" ? "goal-card is-selected" : "goal-card"} type="button" aria-pressed={goal === "offgrid"} onClick={() => setGoal("offgrid")}>
                   <span className="goal-icon">○</span><strong>Live off-grid</strong><small>Higher reserve for independent operation</small>
                 </button>
               </div>
@@ -1142,16 +1167,28 @@ export function SolarPlanner() {
               <div className="input-section">
                 <div className="input-section-heading"><strong>Monthly usage</strong><span>From your latest bill</span></div>
                 <div className="metric-inputs">
-                  <label><span>Electricity used</span><div className="input-with-unit"><input type="number" min={50} max={10000} value={monthlyKwh} onChange={(event) => setMonthlyKwh(Number(event.target.value))} /><em>kWh / month</em></div></label>
-                  <label><span>Average bill</span><div className="input-with-unit"><input type="number" min={0} value={monthlyBill} onChange={(event) => setMonthlyBill(Number(event.target.value))} /><em>N$ / month</em></div></label>
+                  <div className="metric-field">
+                    <div className="field-label-row"><label htmlFor="monthly-kwh">Electricity used</label><FieldHelp title="electricity used">Kilowatt-hours (kWh) measure energy consumed over time. Use the 12-month average from your bills if available; this directly drives array size.</FieldHelp></div>
+                    <div className="input-with-unit"><input id="monthly-kwh" name="monthlyKwh" type="number" min={50} max={10000} value={monthlyKwh} aria-invalid={monthlyKwh < 50 || monthlyKwh > 10000} onChange={(event) => setMonthlyKwh(Number(event.target.value))} /><em>kWh / month</em></div>
+                  </div>
+                  <div className="metric-field">
+                    <div className="field-label-row"><label htmlFor="monthly-bill">Average bill</label><FieldHelp title="average electricity bill">Enter the normal monthly amount in Namibian dollars. It is shown as financial context only; it does not change electrical sizing because tariffs and fixed charges vary.</FieldHelp></div>
+                    <div className="input-with-unit"><input id="monthly-bill" name="monthlyBillNad" type="number" min={0} value={monthlyBill} aria-invalid={monthlyBill < 0} onChange={(event) => setMonthlyBill(Number(event.target.value))} /><em>N$ / month</em></div>
+                  </div>
                 </div>
               </div>
 
               <div className="input-section">
                 <div className="input-section-heading"><strong>Electricity connection</strong><span>Check your meter or bill</span></div>
                 <div className="metric-inputs">
-                  <label><span>Supply phase</span><select value={phase} onChange={(event) => setPhase(event.target.value)}><option>Single phase</option><option>Three phase</option><option>Not sure</option></select></label>
-                  <label><span>Main breaker</span><div className="input-with-unit"><input type="number" min={10} max={400} value={breaker} onChange={(event) => setBreaker(Number(event.target.value))} /><em>amps</em></div></label>
+                  <div className="metric-field">
+                    <div className="field-label-row"><label htmlFor="supply-phase">Supply phase</label><FieldHelp title="supply phase">Single- or three-phase supply affects inverter architecture and distributor approval. It does not change how much energy you use.</FieldHelp></div>
+                    <select id="supply-phase" name="supplyPhase" value={phase} onChange={(event) => setPhase(event.target.value as SupplyPhase)}><option>Single phase</option><option>Three phase</option><option>Not sure</option></select>
+                  </div>
+                  <div className="metric-field">
+                    <div className="field-label-row"><label htmlFor="main-breaker">Main breaker</label><FieldHelp title="main breaker">This is the incoming connection rating in amperes, usually printed on the main switch. We use it for a preliminary connection-capacity check only.</FieldHelp></div>
+                    <div className="input-with-unit"><input id="main-breaker" name="mainBreakerAmps" type="number" min={10} max={400} value={breaker} aria-invalid={breaker < 10 || breaker > 400} onChange={(event) => setBreaker(Number(event.target.value))} /><em>amps</em></div>
+                  </div>
                 </div>
               </div>
 
@@ -1159,15 +1196,23 @@ export function SolarPlanner() {
                 <div className="input-section">
                   <div className="input-section-heading"><strong>Backup requirement</strong><span>Essential loads only</span></div>
                   <div className="metric-inputs">
-                    <label><span>Backup duration</span><div className="input-with-unit"><input type="number" min={1} max={72} value={backupHours} onChange={(event) => setBackupHours(Number(event.target.value))} /><em>hours</em></div></label>
-                    <label><span>Critical load</span><div className="input-with-unit"><input type="number" min={0.2} max={20} step={0.1} value={criticalLoad} onChange={(event) => setCriticalLoad(Number(event.target.value))} /><em>kW</em></div></label>
+                    <div className="metric-field">
+                      <div className="field-label-row"><label htmlFor="backup-hours">Backup duration</label><FieldHelp title="backup duration">How long essential circuits should run during an outage. This is not guaranteed whole-home runtime; actual runtime changes with the appliances operating.</FieldHelp></div>
+                      <div className="input-with-unit"><input id="backup-hours" name="backupHours" type="number" min={1} max={72} value={backupHours} aria-invalid={backupHours < 1 || backupHours > 72} onChange={(event) => setBackupHours(Number(event.target.value))} /><em>hours</em></div>
+                    </div>
+                    <div className="metric-field">
+                      <div className="field-label-row"><label htmlFor="critical-load">Critical load</label><FieldHelp title="critical load">The combined power of appliances that may run at the same time during an outage—for example lights, fridge, Wi-Fi and selected sockets. A load audit should confirm it.</FieldHelp></div>
+                      <div className="input-with-unit"><input id="critical-load" name="criticalLoadKw" type="number" min={0.2} max={20} step={0.1} value={criticalLoad} aria-invalid={criticalLoad < 0.2 || criticalLoad > 20} onChange={(event) => setCriticalLoad(Number(event.target.value))} /><em>kW</em></div>
+                    </div>
                   </div>
                 </div>
               ) : null}
 
+              {!energyProfileValid ? <p className="validation-message" role="status" aria-live="polite">Check the highlighted values before calculating. Usage must be 50–10,000 kWh/month and connection or backup values must stay within the shown limits.</p> : null}
+
               <div className="form-footer-actions">
                 <button className="button button-secondary" type="button" onClick={() => goToStep(1)}>← Back</button>
-                <button className="button button-primary" type="button" onClick={() => goToStep(3)}>Calculate my system <span>→</span></button>
+                <button className="button button-primary" type="button" disabled={!energyProfileValid} onClick={() => goToStep(3)}>Calculate my system <span>→</span></button>
               </div>
             </div>
 
@@ -1177,9 +1222,10 @@ export function SolarPlanner() {
               <dl className="context-stats">
                 <div><dt>Usable surface</dt><dd>{number.format(usableArea)} m²</dd></div>
                 <div><dt>Physical limit</dt><dd>{maxPanels} panels</dd></div>
-                <div><dt>Planning yield</dt><dd>{SPECIFIC_YIELD.toLocaleString()} kWh/kWp/yr</dd></div>
+                <div><dt>Reference panel</dt><dd>{REFERENCE_PANEL.powerWatts} W Jinko</dd></div>
+                <div><dt>Planning yield</dt><dd>{SPECIFIC_YIELD_KWH_PER_KWP.toLocaleString()} kWh/kWp/yr</dd></div>
               </dl>
-              <p>We use a conservative Namibia planning yield. Production will vary with orientation, shading, temperature and equipment.</p>
+              <p>The bill amount is not used to size electrical equipment. Production uses a regional planning yield until orientation, shading and a site-specific solar-resource model are verified.</p>
             </aside>
           </section>
         ) : null}
@@ -1192,11 +1238,15 @@ export function SolarPlanner() {
                 <h2 id="system-title">A {number.format(results.capacityKwp)} kWp {goal === "grid" ? "grid-tied" : goal === "hybrid" ? "hybrid" : "off-grid"} system</h2>
                 <p>Designed around {monthlyKwh.toLocaleString()} kWh monthly use and the surface you traced in {locationName}.</p>
               </div>
-              <div className="confidence-card"><span>Planning confidence</span><strong>Medium</strong><small>Site survey will confirm shade and roof structure</small></div>
+              <div className="confidence-card"><span>Estimate stage</span><strong>Planning</strong><small>Not yet a certified design or supplier quotation</small></div>
             </div>
 
             {results.constrained ? (
               <div className="alert-banner"><strong>Space-limited design</strong><span>The traced surface fits {maxPanels} panels, fewer than the {results.neededPanels} needed for the target. The estimate uses the maximum that fits.</span></div>
+            ) : null}
+
+            {results.connectionReviewNeeded ? (
+              <div className="alert-banner"><strong>Connection review needed</strong><span>The preliminary {decimal.format(results.connectionCapacityKva ?? 0)} kVA connection screen is below the selected {results.inverterKw} kW inverter class. A qualified installer must verify the breaker, phase balance and distributor rules.</span></div>
             ) : null}
 
             <div className="result-grid">
@@ -1207,30 +1257,37 @@ export function SolarPlanner() {
                   <div><span>{number.format(usableArea)} m²</span><small>usable surface</small></div>
                   <div><span>{maxPanels}</span><small>panel physical limit</small></div>
                 </div>
-                <div className="layout-note"><span>Indicative placement</span><span>{number.format(usableArea - results.panels * panelArea)} m² estimated reserve</span></div>
+                <div className="layout-note"><span>Indicative placement</span><span>{number.format(Math.max(0, usableArea * LAYOUT_PACKING_EFFICIENCY - results.panels * panelArea))} m² estimated packing reserve</span></div>
               </div>
 
               <div className="spec-card">
                 <p className="eyebrow">Core equipment</p>
                 <div className="spec-list">
-                  <div><span className="spec-icon">▦</span><span><small>PV array</small><strong>{results.panels} × {PANEL_POWER_WATTS} W panels</strong></span><em>{number.format(results.capacityKwp)} kWp</em></div>
-                  <div><span className="spec-icon">ϟ</span><span><small>Inverter</small><strong>{phase} hybrid-ready</strong></span><em>{results.inverterKw} kW</em></div>
-                  <div><span className="spec-icon">▤</span><span><small>Battery storage</small><strong>{results.batteryKwh ? "Modular LFP battery" : "Not required"}</strong></span><em>{results.batteryKwh ? `${number.format(results.batteryKwh)} kWh` : "Optional"}</em></div>
+                  <div><span className="spec-icon">▦</span><span><small>PV array · reference product</small><strong>{results.panels} × {REFERENCE_PANEL.manufacturer} {REFERENCE_PANEL.model}</strong></span><em>{REFERENCE_PANEL.powerWatts} W each</em></div>
+                  <div><span className="spec-icon">↔</span><span><small>Published module dimensions</small><strong>{REFERENCE_PANEL.lengthMm} × {REFERENCE_PANEL.widthMm} × {REFERENCE_PANEL.depthMm} mm</strong></span><em><a href={REFERENCE_PANEL.specificationUrl} target="_blank" rel="noreferrer">Datasheet ↗</a></em></div>
+                  <div><span className="spec-icon">ϟ</span><span><small>Inverter class</small><strong>{phase} · {decimal.format(DC_AC_RATIO)} DC/AC design ratio</strong></span><em>{results.inverterKw} kW</em></div>
+                  <div><span className="spec-icon">▤</span><span><small>Nominal battery storage</small><strong>{results.batteryKwh ? "Modular LFP planning size" : "Not required"}</strong></span><em>{results.batteryKwh ? `${number.format(results.batteryKwh)} kWh` : "Optional"}</em></div>
                   <div><span className="spec-icon">⌁</span><span><small>Connection check</small><strong>{breaker} A main breaker</strong></span><em>Installer to verify</em></div>
                 </div>
               </div>
             </div>
 
             <div className="outcome-grid">
-              <article><span>Estimated generation</span><strong>{Math.round(results.annualGeneration).toLocaleString()} kWh</strong><small>per year · planning model</small></article>
-              <article><span>Energy coverage</span><strong>{Math.round(results.coverage)}%</strong><small>annual generation vs usage</small></article>
-              <article><span>Budget range</span><strong>{money.format(results.lowBudget)}–{money.format(results.highBudget)}</strong><small>equipment + planning allowances</small></article>
-              <article><span>Current bill reference</span><strong>{money.format(monthlyBill)}</strong><small>per month · before solar</small></article>
+              <article><span>Estimated generation</span><strong>{Math.round(results.annualGenerationKwh).toLocaleString()} kWh</strong><small>per year · regional planning model</small></article>
+              <article><span>Energy coverage</span><strong>{Math.round(results.coveragePercent)}%</strong><small>annual generation vs usage</small></article>
+              <article><span>Installed-system price</span><strong>Quote required</strong><small>no fabricated inverter or installation allowance</small></article>
+              <article><span>Current bill reference</span><strong>{money.format(monthlyBill)}</strong><small>per month · not used for electrical sizing</small></article>
             </div>
 
             <div className="assumption-row">
-              <div><strong>How this was calculated</strong><span>{SPECIFIC_YIELD.toLocaleString()} kWh/kWp annual yield · {PANEL_POWER_WATTS} W panels · {installType === "roof" ? "22%" : "15%"} surface allowance · 8–14% budget uncertainty</span></div>
-              <span className="version-tag">Engine v0.1</span>
+              <div><strong>How this was calculated</strong><span>{SPECIFIC_YIELD_KWH_PER_KWP.toLocaleString()} kWh/kWp/year planning yield · {REFERENCE_PANEL.powerWatts} W named module · {Math.round(results.surfaceAllowance * 100)}% surface allowance · {Math.round((1 - LAYOUT_PACKING_EFFICIENCY) * 100)}% packing factor</span></div>
+              <span className="version-tag">{ENGINE_VERSION}</span>
+            </div>
+
+            <div className="calculation-audit" aria-label="Calculation details">
+              <article><span>Array sizing</span><strong>{decimal.format(results.annualLoadKwh)} kWh/year load</strong><p>Annual load × goal coverage ÷ planning yield, rounded up to whole {REFERENCE_PANEL.powerWatts} W modules.</p></article>
+              <article><span>Battery sizing</span><strong>{results.batteryKwh ? `${decimal.format(results.requiredUsableBatteryKwh)} kWh usable → ${decimal.format(results.batteryKwh)} kWh nominal` : "No mandatory storage"}</strong><p>{Math.round(BATTERY_DEPTH_OF_DISCHARGE * 100)}% depth of discharge · {Math.round(BATTERY_PATH_EFFICIENCY * 100)}% path efficiency · {Math.round((BATTERY_DESIGN_RESERVE - 1) * 100)}% reserve.</p></article>
+              <article><span>Still needs verification</span><strong>Shade, orientation, structure and equipment matching</strong><p>Final strings, protection, export limits, warranties and installation scope belong in the installer design and supplier bill of materials.</p></article>
             </div>
 
             <div className="result-actions">
@@ -1249,39 +1306,34 @@ export function SolarPlanner() {
 
             <div className="supplier-table-wrap">
               <table className="supplier-table">
-                <thead><tr><th>Supplier</th><th>Closest public panel offer</th><th>Panel subtotal</th><th>Complete system</th><th>Freshness</th><th><span className="sr-only">Action</span></th></tr></thead>
+                <thead><tr><th>Supplier</th><th>Verified product</th><th>Power & dimensions</th><th>Equivalent panel price</th><th>Availability</th><th>Evidence</th></tr></thead>
                 <tbody>
-                  <tr>
-                    <td><strong>Pupkewitz Megabuild</strong><small>Retail catalogue · Namibia</small></td>
-                    <td><strong>{results.panels} × Steco 590 W</strong><small>{money.format(2115)} each · VAT included</small></td>
-                    <td><strong>{money.format(panelPriceMegabuild)}</strong><small>{money.format(2115 / 590)} / W</small></td>
-                    <td><span className="incomplete-badge">Panel-only public price</span><small>Inverter, storage and installation need a quote</small></td>
-                    <td><span className="fresh-badge">Verified</span><small>16 Aug 2026</small></td>
-                    <td><a className="table-link" href="https://shop.megabuild.com.na/catalogue/solar-panels-e060106/1" target="_blank" rel="noreferrer">View source ↗</a></td>
-                  </tr>
-                  <tr>
-                    <td><strong>Electro Dynamics</strong><small>Electrical retailer · Windhoek</small></td>
-                    <td><strong>{electroPanelCount} × Mono 500 W</strong><small>{money.format(1725)} each · VAT status to confirm</small></td>
-                    <td><strong>{money.format(electroPanelPrice)}</strong><small>{money.format(1725 / 500)} / W before VAT check</small></td>
-                    <td><span className="incomplete-badge">Panel-only public price</span><small>Different panel count and specification</small></td>
-                    <td><span className="fresh-badge">Verified</span><small>16 Aug 2026</small></td>
-                    <td><a className="table-link" href="https://www.electrodynamics.com.na/product-category/solar-products/solar-panels/" target="_blank" rel="noreferrer">View source ↗</a></td>
-                  </tr>
-                  <tr>
-                    <td><strong>Pupkewitz Megatech ReEnSol</strong><small>Complete renewable-energy solutions</small></td>
-                    <td><strong>Matched during consultation</strong><small>Panels, inverter, batteries and accessories</small></td>
-                    <td><strong>Price on request</strong><small>No public complete-system price</small></td>
-                    <td><span className="complete-badge">Full solution available</span><small>Technical service and accredited installers</small></td>
-                    <td><span className="quote-badge">Quote-led</span><small>Supplier confirmation required</small></td>
-                    <td><a className="table-link" href="https://pupkewitzmegatech.com/renewable-energy/" target="_blank" rel="noreferrer">Request quote ↗</a></td>
-                  </tr>
+                  {supplierComparisons.map((offer) => (
+                    <tr key={offer.id}>
+                      <td><strong>{offer.supplier}</strong><small>{offer.supplierType}</small></td>
+                      <td><strong>{offer.productName}</strong><small>SKU {offer.sku} · {offer.equivalentCount} panels for approximately {number.format(results.capacityKwp)} kWp</small></td>
+                      <td><strong>{offer.powerWatts} W</strong><small>{offer.dimensionsMm ? `${offer.dimensionsMm.length} × ${offer.dimensionsMm.width} × ${offer.dimensionsMm.depth} mm` : "Exact dimensions not publicly listed"}</small></td>
+                      <td>{offer.subtotalNad === null ? <><strong>Quote required</strong><small>No public selling price claimed</small></> : <><strong>{money.format(offer.subtotalNad)}</strong><small>{money.format(offer.priceNad ?? 0)} each · {money.format((offer.priceNad ?? 0) / offer.powerWatts)} / W · {offer.vatStatus}</small></>}</td>
+                      <td><span className={offer.availabilityTone === "available" ? "fresh-badge" : offer.availabilityTone === "unavailable" ? "unavailable-badge" : "quote-badge"}>{offer.availability}</span><small>Complete matched system still requires a supplier quote</small></td>
+                      <td><span className="fresh-badge">Checked</span><small>{formatObservedAt(offer.observedAt)}</small><a className="table-link" href={offer.sourceUrl} target="_blank" rel="noreferrer">Supplier source ↗</a>{offer.specificationUrl ? <a className="table-link secondary-source" href={offer.specificationUrl} target="_blank" rel="noreferrer">Manufacturer spec ↗</a> : null}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
 
+            <section className="public-kits" aria-labelledby="public-kits-title">
+              <div><p className="eyebrow">Public package prices</p><h3 id="public-kits-title">Useful references, not automatic matches.</h3><p>These current supplier catalogue prices are visible for context. The published category page does not provide enough bill-of-material detail to confirm battery capacity, panel quantity, phase compatibility or installation scope for this plan.</p></div>
+              <div className="public-kit-grid">
+                {PUBLIC_SYSTEM_OFFERS.map((offer) => (
+                  <article key={offer.id}><span>{offer.supplier}</span><strong>{offer.productName}</strong><b>{money.format(offer.priceNad)}</b><small>Published {formatObservedAt(offer.observedAt)} · suitability unverified</small><a href={offer.sourceUrl} target="_blank" rel="noreferrer">View supplier source ↗</a></article>
+                ))}
+              </div>
+            </section>
+
             <div className="comparison-callout">
-              <div><span className="callout-icon">i</span><p><strong>Why we do not rank a winner yet</strong>Panel wattage, VAT, warranty, stock, delivery and missing system components differ. A fair comparison requires supplier-authorized, complete bills of materials.</p></div>
-              <span>Price snapshot · NAD</span>
+              <div><span className="callout-icon">i</span><p><strong>Why we do not rank a winner yet</strong>Prices are not comparable until panel dimensions, VAT, warranty, stock, delivery, inverter, battery, protection and installation scope are normalized in supplier-authorized bills of materials.</p></div>
+              <span>{CATALOGUE_VERSION} · NAD</span>
             </div>
 
             <div className="quote-panel">

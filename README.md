@@ -9,7 +9,8 @@ Customer-facing planning MVP for residential solar projects in Namibia.
 - estimates usable area and physical panel capacity;
 - sizes panels, inverter and LFP battery storage from energy needs and project goal;
 - shows calculation assumptions and space constraints;
-- compares public supplier information with source links, timestamps and missing-scope warnings;
+- compares versioned public supplier records with source links, timestamps, stock state, VAT scope and missing-data warnings;
+- explains every energy-profile variable with touch- and keyboard-accessible helpers;
 - prints a standardized planning brief for supplier quotations.
 
 This is a planning tool, not a certified electrical or structural design. Production use requires a licensed imagery/geocoding provider, live solar-resource data, distributor-aware tariff and regulation data, supplier-authorized catalog feeds, persistence, and installer validation.
@@ -36,12 +37,13 @@ node --test tests/rendered-html.test.mjs
 
 ## Calculation snapshot
 
-The first planning engine uses:
+The version 0.2 planning engine uses:
 
-- 590 W reference modules;
+- the named JinkoSolar JKM475M-7RL3 reference module (475 W, 2182 × 1029 × 35 mm) from the manufacturer datasheet;
 - 1,720 kWh/kWp/year planning yield;
-- 22% rooftop or 15% ground surface allowance;
+- 22% rooftop or 15% ground surface allowance plus a transparent 90% layout-packing factor;
 - 5.12 kWh modular LFP storage increments;
-- explicit budget allowances rather than supplier-specific fabricated totals.
+- explicit battery depth-of-discharge, conversion-efficiency and design-reserve factors;
+- no fabricated inverter, balance-of-system or installation prices. A complete price remains “quote required” until a supplier-authorized bill of materials is available.
 
-All assumptions are visible in the customer journey and should be replaced by versioned production datasets as the supplier and installer partnerships are established.
+All assumptions are visible in the customer journey. Supplier records are dated and source-linked; live accuracy still requires supplier-authorized feeds or a managed catalogue refresh process.

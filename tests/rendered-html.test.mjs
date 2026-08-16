@@ -38,16 +38,18 @@ test("server-renders the Envision Energia planning journey", async () => {
 });
 
 test("keeps supplier evidence and product metadata in the app", async () => {
-  const [planner, layout, packageJson] = await Promise.all([
+  const [planner, catalogue, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/solar-planner.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/solar-catalogue.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(planner, /Pupkewitz Megabuild/);
-  assert.match(planner, /Electro Dynamics/);
-  assert.match(planner, /Pupkewitz Megatech ReEnSol/);
-  assert.match(planner, /Verified/);
+  assert.match(catalogue, /Pupkewitz Megabuild/);
+  assert.match(catalogue, /Electro Dynamics/);
+  assert.match(catalogue, /Pupkewitz Megatech ReEnSol/);
+  assert.match(catalogue, /observedAt/);
+  assert.match(catalogue, /JKM475M-7RL3/);
   assert.match(planner, /NEXT_PUBLIC_GOOGLE_MAPS_API_KEY/);
   assert.match(planner, /MapTypeId\.HYBRID/);
   assert.match(planner, /`N\$\$\{nadNumber\.format\(value\)\}`/);
@@ -55,4 +57,18 @@ test("keeps supplier evidence and product metadata in the app", async () => {
   assert.match(layout, /\/og\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await access(new URL("../public/og.png", import.meta.url));
+});
+
+test("uses traceable calculations without fabricated installed budgets", async () => {
+  const [planner, calculator] = await Promise.all([
+    readFile(new URL("../app/solar-planner.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/solar-calculator.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(planner, /Installed-system price/);
+  assert.match(planner, /Quote required/);
+  assert.match(planner, /FieldHelp/);
+  assert.match(calculator, /BATTERY_DEPTH_OF_DISCHARGE/);
+  assert.match(calculator, /LAYOUT_PACKING_EFFICIENCY/);
+  assert.doesNotMatch(planner, /installationAllowance|inverterAllowance|lowBudget|highBudget/);
 });
