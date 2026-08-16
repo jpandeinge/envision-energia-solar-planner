@@ -15,22 +15,29 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol =
     incomingHeaders.get("x-forwarded-proto") ??
     (host.startsWith("localhost") ? "http" : "https");
-  const socialImage = `${protocol}://${host}/og.png`;
+  const siteUrl = `${protocol}://${host}`;
+  const socialImage = `${siteUrl}/og.png?v=20260816-map`;
+  const socialImageAlt =
+    "Envision Energia rooftop solar planner with a traced Namibian property and fitted solar panels";
 
   return {
     title,
     description,
+    alternates: { canonical: siteUrl },
     openGraph: {
       title,
       description,
       type: "website",
-      images: [{ url: socialImage, width: 1746, height: 909, alt: "Envision Energia solar planner for Namibia" }],
+      url: siteUrl,
+      siteName: "Envision Energia",
+      locale: "en_NA",
+      images: [{ url: socialImage, width: 1730, height: 909, alt: socialImageAlt }],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
-      images: [socialImage],
+      images: [{ url: socialImage, alt: socialImageAlt }],
     },
   };
 }
