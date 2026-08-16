@@ -72,3 +72,15 @@ test("uses traceable calculations without fabricated installed budgets", async (
   assert.match(calculator, /LAYOUT_PACKING_EFFICIENCY/);
   assert.doesNotMatch(planner, /installationAllowance|inverterAllowance|lowBudget|highBudget/);
 });
+
+test("requests the user's current location on first load with a safe fallback", async () => {
+  const planner = await readFile(
+    new URL("../app/solar-planner.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(planner, /requestCurrentLocation\("automatic"\)/);
+  assert.match(planner, /navigator\.geolocation\.getCurrentPosition/);
+  assert.match(planner, /maximumAge: 300000/);
+  assert.match(planner, /demo fallback/);
+});

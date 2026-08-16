@@ -755,7 +755,7 @@ export function SolarPlanner() {
   const [installType, setInstallType] = useState<InstallationType>("roof");
   const [latitude, setLatitude] = useState("-22.5609");
   const [longitude, setLongitude] = useState("17.0658");
-  const [locationName, setLocationName] = useState("Klein Windhoek, Namibia");
+  const [locationName, setLocationName] = useState("Finding your current location…");
   const [pitch, setPitch] = useState(18);
   const [monthlyKwh, setMonthlyKwh] = useState(620);
   const [monthlyBill, setMonthlyBill] = useState(1650);
@@ -764,7 +764,10 @@ export function SolarPlanner() {
   const [breaker, setBreaker] = useState(60);
   const [backupHours, setBackupHours] = useState(6);
   const [criticalLoad, setCriticalLoad] = useState(1.8);
-  const [locationMessage, setLocationMessage] = useState("");
+  const [locationMessage, setLocationMessage] = useState("Requesting location access…");
+  const [isLocating, setIsLocating] = useState(true);
+  const hasRequestedInitialLocationRef = useRef(false);
+  const hasManualLocationRef = useRef(false);
   const surfaceRef = useRef<SurfaceSnapshot>({
     points: defaultSurface,
     geoPoints: defaultGeoSurface,
@@ -873,7 +876,13 @@ export function SolarPlanner() {
   }, []);
 
   const selectPropertyLocation = useCallback(
-    (location: GeoPoint, label: string) => {
+    (
+      location: GeoPoint,
+      label: string,
+      source: "automatic" | "user" = "user",
+    ) => {
+      if (source === "automatic" && hasManualLocationRef.current) return;
+      if (source === "user") hasManualLocationRef.current = true;
       setLatitude(location.lat.toFixed(6));
       setLongitude(location.lng.toFixed(6));
       setLocationName(label);
@@ -884,7 +893,12 @@ export function SolarPlanner() {
       setEditingSurface(false);
       setDiscardedSurface(null);
       setStep(1);
-      setLocationMessage(`${label} selected. Trace the usable installation area.`);
+      setLocationMessage(
+        source === "automatic"
+          ? "Current location found. Trace the usable installation area."
+          : `${label} selected. Trace the usable installation area.`,
+      );
+      setIsLocating(false);
     },
     [],
   );
@@ -893,12 +907,18 @@ export function SolarPlanner() {
     setLocationMessage(message);
   }, []);
 
-  const getCurrentLocation = () => {
+  const requestCurrentLocation = useCallback((source: "automatic" | "user") => {
     if (!("geolocation" in navigator)) {
-      setLocationMessage("Location access is not supported by this browser.");
+      if (!hasManualLocationRef.current) {
+        setLocationName("Klein Windhoek, Namibia · demo fallback");
+        setLocationMessage("Location is not supported by this browser. Search or enter coordinates instead.");
+      }
+      setIsLocating(false);
       return;
     }
-    setLocationMessage("Locating…");
+    if (source === "user") hasManualLocationRef.current = false;
+    setIsLocating(true);
+    setLocationMessage("Finding your current location…");
     navigator.geolocation.getCurrentPosition(
       (position) => {
         selectPropertyLocation(
@@ -906,13 +926,29 @@ export function SolarPlanner() {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
           },
-          "Current location",
+          "Your current location",
+          source,
         );
       },
-      () => setLocationMessage("We could not access your location. Enter coordinates instead."),
-      { enableHighAccuracy: true, timeout: 8000 },
+      (error) => {
+        if (source === "automatic" && hasManualLocationRef.current) return;
+        setLocationName("Klein Windhoek, Namibia · demo fallback");
+        setLocationMessage(
+          error.code === error.PERMISSION_DENIED
+            ? "Location access was not granted. Showing the Windhoek demo; search or enter coordinates instead."
+            : "We could not determine your location. Showing the Windhoek demo; you can try again.",
+        );
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
     );
-  };
+  }, [selectPropertyLocation]);
+
+  useEffect(() => {
+    if (hasRequestedInitialLocationRef.current) return;
+    hasRequestedInitialLocationRef.current = true;
+    requestCurrentLocation("automatic");
+  }, [requestCurrentLocation]);
 
   const goToStep = (nextStep: number) => {
     if (nextStep > 1 && (!closed || rawArea < 10)) return;
@@ -1005,8 +1041,8 @@ export function SolarPlanner() {
                     onSearchError={handleSearchError}
                   />
                 </div>
-                <button className="icon-button" type="button" onClick={getCurrentLocation} aria-label="Use current location">
-                  ◎
+                <button className="icon-button" type="button" onClick={() => requestCurrentLocation("user")} disabled={isLocating} aria-label={isLocating ? "Finding current location" : "Use current location"} aria-busy={isLocating}>
+                  {isLocating ? "…" : "◎"}
                 </button>
               </div>
 
