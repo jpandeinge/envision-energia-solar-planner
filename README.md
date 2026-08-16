@@ -38,6 +38,8 @@ The test suite covers the calculation engine, polygon module fit, PVGIS azimuth 
 
 ## Deployment
 
+Production: [envision-energia-solar-planner.vercel.app](https://envision-energia-solar-planner.vercel.app)
+
 The application supports two build targets from the same source:
 
 - `npm run build` produces the current Cloudflare/Sites build.
