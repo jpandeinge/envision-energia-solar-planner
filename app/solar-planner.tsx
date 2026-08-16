@@ -15,10 +15,9 @@ import {
   calculateSolarPlan,
   DC_AC_RATIO,
   ENGINE_VERSION,
-  LAYOUT_PACKING_EFFICIENCY,
+  FALLBACK_SPECIFIC_YIELD_KWH_PER_KWP,
   type InstallationType,
   type SolarGoal,
-  SPECIFIC_YIELD_KWH_PER_KWP,
   type SupplyPhase,
 } from "./solar-calculator";
 import {
@@ -27,6 +26,17 @@ import {
   REFERENCE_PANEL,
   SUPPLIER_PANEL_OFFERS,
 } from "./solar-catalogue";
+import {
+  calculatePanelLayout,
+  canvasPolygonToMetres,
+  geographicPolygonToMetres,
+  type PanelLayout,
+} from "./panel-layout";
+import {
+  compassToPvgisAspect,
+  SURFACE_DIRECTIONS,
+  type SurfaceDirection,
+} from "./solar-yield";
 
 type Point = { x: number; y: number };
 type GeoPoint = { lat: number; lng: number };
@@ -34,6 +44,14 @@ type SurfaceSnapshot = {
   points: Point[];
   geoPoints: GeoPoint[];
   closed: boolean;
+};
+type UsageMode = "average" | "monthly";
+type SolarYieldState = {
+  status: "loading" | "ready" | "fallback";
+  specificYieldKwhPerKwp: number;
+  monthlyKwhPerKwp: number[] | null;
+  source: string;
+  detail: string;
 };
 
 type GoogleMapClickEvent = {
@@ -102,6 +120,21 @@ declare global {
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 520;
 const METRES_PER_PIXEL = 0.052;
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+const DEFAULT_MONTHLY_KWH = 620;
 
 const defaultSurface: Point[] = [
   { x: 250, y: 145 },
@@ -363,6 +396,64 @@ function FieldHelp({ title, children }: { title: string; children: string }) {
       </summary>
       <p>{children}</p>
     </details>
+  );
+}
+
+function PanelLayoutPreview({
+  layout,
+  selectedPanels,
+}: {
+  layout: PanelLayout;
+  selectedPanels: number;
+}) {
+  if (layout.polygon.length < 3) {
+    return (
+      <div className="panel-layout-empty">
+        Complete the site outline to calculate a module layout.
+      </div>
+    );
+  }
+
+  const xValues = layout.polygon.map((point) => point.x);
+  const yValues = layout.polygon.map((point) => point.y);
+  const minX = Math.min(...xValues);
+  const maxX = Math.max(...xValues);
+  const minY = Math.min(...yValues);
+  const maxY = Math.max(...yValues);
+  const padding = Math.max(0.8, Math.max(maxX - minX, maxY - minY) * 0.08);
+  const width = Math.max(1, maxX - minX + padding * 2);
+  const height = Math.max(1, maxY - minY + padding * 2);
+  const polygonPoints = layout.polygon
+    .map((point) => `${point.x},${point.y}`)
+    .join(" ");
+
+  return (
+    <div className="panel-layout-preview">
+      <svg
+        viewBox={`${minX - padding} ${minY - padding} ${width} ${height}`}
+        role="img"
+        aria-label={`${selectedPanels} solar panels placed inside the traced surface`}
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <polygon className="layout-surface" points={polygonPoints} />
+        {layout.placements.slice(0, selectedPanels).map((panel) => (
+          <rect
+            key={panel.id}
+            className="layout-panel"
+            x={panel.centerX - panel.widthM / 2}
+            y={panel.centerY - panel.heightM / 2}
+            width={panel.widthM}
+            height={panel.heightM}
+            rx={0.06}
+            transform={`rotate(${panel.rotationDegrees} ${panel.centerX} ${panel.centerY})`}
+          />
+        ))}
+      </svg>
+      <div className="layout-preview-key" aria-hidden="true">
+        <span><i /> Selected modules</span>
+        <span><i /> Traced surface</span>
+      </div>
+    </div>
   );
 }
 
@@ -757,7 +848,12 @@ export function SolarPlanner() {
   const [longitude, setLongitude] = useState("17.0658");
   const [locationName, setLocationName] = useState("Finding your current location…");
   const [pitch, setPitch] = useState(18);
-  const [monthlyKwh, setMonthlyKwh] = useState(620);
+  const [direction, setDirection] = useState<SurfaceDirection>("north");
+  const [usageMode, setUsageMode] = useState<UsageMode>("average");
+  const [monthlyKwh, setMonthlyKwh] = useState(DEFAULT_MONTHLY_KWH);
+  const [monthlyUsage, setMonthlyUsage] = useState<number[]>(
+    Array.from({ length: 12 }, () => DEFAULT_MONTHLY_KWH),
+  );
   const [monthlyBill, setMonthlyBill] = useState(1650);
   const [goal, setGoal] = useState<SolarGoal>("hybrid");
   const [phase, setPhase] = useState<SupplyPhase>("Single phase");
@@ -766,6 +862,13 @@ export function SolarPlanner() {
   const [criticalLoad, setCriticalLoad] = useState(1.8);
   const [locationMessage, setLocationMessage] = useState("Requesting location access…");
   const [isLocating, setIsLocating] = useState(true);
+  const [solarYield, setSolarYield] = useState<SolarYieldState>({
+    status: "loading",
+    specificYieldKwhPerKwp: FALLBACK_SPECIFIC_YIELD_KWH_PER_KWP,
+    monthlyKwhPerKwp: null,
+    source: "Regional resilience fallback",
+    detail: "Waiting for a complete site location.",
+  });
   const hasRequestedInitialLocationRef = useRef(false);
   const hasManualLocationRef = useRef(false);
   const surfaceRef = useRef<SurfaceSnapshot>({
@@ -777,6 +880,85 @@ export function SolarPlanner() {
   useEffect(() => {
     surfaceRef.current = { points, geoPoints, closed };
   }, [closed, geoPoints, points]);
+
+  useEffect(() => {
+    const parsedLatitude = Number(latitude);
+    const parsedLongitude = Number(longitude);
+    if (
+      !Number.isFinite(parsedLatitude) ||
+      !Number.isFinite(parsedLongitude) ||
+      parsedLatitude < -90 ||
+      parsedLatitude > 90 ||
+      parsedLongitude < -180 ||
+      parsedLongitude > 180
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setSolarYield((current) => ({
+        ...current,
+        status: "loading",
+        detail: "Updating the solar-resource model for this surface…",
+      }));
+      const query = new URLSearchParams({
+        lat: parsedLatitude.toString(),
+        lon: parsedLongitude.toString(),
+        angle: pitch.toString(),
+        aspect: compassToPvgisAspect(direction).toString(),
+      });
+
+      fetch(`/api/solar-yield?${query.toString()}`, {
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Solar-resource request failed");
+          return response.json() as Promise<{
+            specificYieldKwhPerKwp: number;
+            monthlyKwhPerKwp: number[];
+            source: string;
+            radiationDatabase: string;
+            dataPeriod: { start: number | null; end: number | null };
+          }>;
+        })
+        .then((payload) => {
+          if (
+            !Number.isFinite(payload.specificYieldKwhPerKwp) ||
+            payload.specificYieldKwhPerKwp <= 0 ||
+            payload.monthlyKwhPerKwp.length !== 12
+          ) {
+            throw new Error("Solar-resource response was incomplete");
+          }
+          setSolarYield({
+            status: "ready",
+            specificYieldKwhPerKwp: payload.specificYieldKwhPerKwp,
+            monthlyKwhPerKwp: payload.monthlyKwhPerKwp,
+            source: payload.source,
+            detail: `${payload.radiationDatabase}${
+              payload.dataPeriod.start && payload.dataPeriod.end
+                ? ` · ${payload.dataPeriod.start}–${payload.dataPeriod.end}`
+                : ""
+            } · 14% system loss`,
+          });
+        })
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setSolarYield({
+            status: "fallback",
+            specificYieldKwhPerKwp: FALLBACK_SPECIFIC_YIELD_KWH_PER_KWP,
+            monthlyKwhPerKwp: null,
+            source: "Regional resilience fallback",
+            detail: "PVGIS is unavailable; retry by changing the site details.",
+          });
+        });
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [direction, latitude, longitude, pitch]);
 
   const mapCenter = useMemo(
     () => ({
@@ -790,22 +972,50 @@ export function SolarPlanner() {
       ? geographicPolygonArea(geoPoints)
       : polygonArea(points);
   const pointCount = geoPoints.length || points.length;
+  const panelArea =
+    (REFERENCE_PANEL.lengthMm / 1000) * (REFERENCE_PANEL.widthMm / 1000);
+  const localSurface = useMemo(
+    () =>
+      geoPoints.length >= 3
+        ? geographicPolygonToMetres(geoPoints)
+        : canvasPolygonToMetres(points, METRES_PER_PIXEL),
+    [geoPoints, points],
+  );
+  const panelLayout = useMemo(
+    () =>
+      calculatePanelLayout({
+        polygon: localSurface,
+        panelWidthM: REFERENCE_PANEL.widthMm / 1000,
+        panelLengthM: REFERENCE_PANEL.lengthMm / 1000,
+        installationType: installType,
+      }),
+    [installType, localSurface],
+  );
+  const maxPanels = panelLayout.placements.length;
+  const activeMonthlyUsage =
+    usageMode === "monthly"
+      ? monthlyUsage
+      : Array.from({ length: 12 }, () => monthlyKwh);
+  const annualLoadKwh = activeMonthlyUsage.reduce(
+    (total, value) => total + (Number.isFinite(value) ? Math.max(0, value) : 0),
+    0,
+  );
+  const averageMonthlyKwh = annualLoadKwh / 12;
 
   const results = useMemo(() => {
     return calculateSolarPlan({
-      rawAreaM2: rawArea,
-      installType,
-      monthlyKwh,
+      annualLoadKwh,
+      specificYieldKwhPerKwp: solarYield.specificYieldKwhPerKwp,
+      maxPanels,
+      panelPowerWatts: REFERENCE_PANEL.powerWatts,
+      panelFootprintM2: panelArea,
       goal,
       phase,
       breakerAmps: breaker,
       backupHours,
       criticalLoadKw: criticalLoad,
     });
-  }, [backupHours, breaker, criticalLoad, goal, installType, monthlyKwh, phase, rawArea]);
-  const usableArea = results.usableAreaM2;
-  const maxPanels = results.maxPanels;
-  const panelArea = results.panelFootprintM2;
+  }, [annualLoadKwh, backupHours, breaker, criticalLoad, goal, maxPanels, panelArea, phase, solarYield.specificYieldKwhPerKwp]);
 
   const resetSurface = useCallback(() => {
     const currentSurface = surfaceRef.current;
@@ -958,8 +1168,11 @@ export function SolarPlanner() {
   };
 
   const energyProfileValid =
-    monthlyKwh >= 50 &&
-    monthlyKwh <= 10000 &&
+    annualLoadKwh >= 600 &&
+    annualLoadKwh <= 120000 &&
+    activeMonthlyUsage.every(
+      (value) => Number.isFinite(value) && value >= 0 && value <= 10000,
+    ) &&
     monthlyBill >= 0 &&
     breaker >= 10 &&
     breaker <= 400 &&
@@ -968,6 +1181,20 @@ export function SolarPlanner() {
         backupHours <= 72 &&
         criticalLoad >= 0.2 &&
         criticalLoad <= 20));
+  const monthlySpecificYield =
+    solarYield.monthlyKwhPerKwp ??
+    Array.from(
+      { length: 12 },
+      () => solarYield.specificYieldKwhPerKwp / 12,
+    );
+  const monthlyProduction = monthlySpecificYield.map(
+    (specificYield) => specificYield * results.capacityKwp,
+  );
+  const monthlyBalanceMaximum = Math.max(
+    1,
+    ...activeMonthlyUsage,
+    ...monthlyProduction,
+  );
   const supplierComparisons = SUPPLIER_PANEL_OFFERS.map((offer) => {
     const equivalentCount = Math.ceil(
       (results.capacityKwp * 1000) / offer.powerWatts,
@@ -1079,7 +1306,7 @@ export function SolarPlanner() {
                   </strong>
                   <span>
                     {step !== 1
-                      ? `${number.format(usableArea)} m² usable · ${maxPanels} panel physical limit`
+                      ? `${number.format(rawArea)} m² traced · ${maxPanels} full modules fit`
                       : editingSurface
                         ? "Drag corner handles or move the complete shape."
                         : closed
@@ -1146,13 +1373,13 @@ export function SolarPlanner() {
               </div>
               {locationMessage ? <p className="form-message" role="status">{locationMessage}</p> : null}
 
-              {installType === "roof" ? (
+              <div className="surface-geometry-grid">
                 <div className="metric-field field-label">
                   <div className="field-label-row">
-                    <label htmlFor="roof-pitch">Approximate roof pitch</label>
-                    <FieldHelp title="roof pitch">Pitch affects mounting, access and final solar production. This first estimate records it, but a site survey must verify the angle and roof structure.</FieldHelp>
+                    <label htmlFor="surface-pitch">{installType === "roof" ? "Approximate roof pitch" : "Planned panel tilt"}</label>
+                    <FieldHelp title="surface pitch">The tilt from horizontal changes the sunlight received by the modules. Use the roof slope for rooftop systems or the planned mounting angle for ground systems.</FieldHelp>
                   </div>
-                  <select id="roof-pitch" name="roofPitch" value={pitch} onChange={(event) => setPitch(Number(event.target.value))}>
+                  <select id="surface-pitch" name="surfacePitch" value={pitch} onChange={(event) => setPitch(Number(event.target.value))}>
                     <option value={5}>Almost flat · 5°</option>
                     <option value={12}>Low pitch · 12°</option>
                     <option value={18}>Typical pitch · 18°</option>
@@ -1160,18 +1387,27 @@ export function SolarPlanner() {
                     <option value={35}>Very steep · 35°</option>
                   </select>
                 </div>
-              ) : null}
+                <div className="metric-field field-label">
+                  <div className="field-label-row">
+                    <label htmlFor="surface-direction">{installType === "roof" ? "Roof faces" : "Panels face"}</label>
+                    <FieldHelp title="surface direction">This is the compass direction the sloped module surface faces. In Namibia, north-facing surfaces usually receive the strongest annual solar resource.</FieldHelp>
+                  </div>
+                  <select id="surface-direction" name="surfaceDirection" value={direction} onChange={(event) => setDirection(event.target.value as SurfaceDirection)}>
+                    {SURFACE_DIRECTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </div>
+              </div>
 
               <div className="surface-summary">
                 <div><span>Traced area</span><strong>{number.format(rawArea)} m²</strong></div>
-                <div><span>Usable after allowance</span><strong>{number.format(usableArea)} m²</strong></div>
-                <div><span>Estimated panel capacity</span><strong>Up to {maxPanels || "—"}</strong></div>
+                <div><span>Edge setback modelled</span><strong>{decimal.format(panelLayout.setbackM)} m</strong></div>
+                <div><span>Geometric panel capacity</span><strong>Up to {maxPanels || "—"}</strong></div>
               </div>
 
               <button className="button button-primary button-full" type="button" disabled={!closed || editingSurface || rawArea < 10} onClick={() => goToStep(2)}>
                 Continue to energy use <span>→</span>
               </button>
-              <p className="fine-print">A {Math.round(results.surfaceAllowance * 100)}% {installType} allowance covers edges, access paths and small obstructions; a further {Math.round((1 - LAYOUT_PACKING_EFFICIENCY) * 100)}% layout factor covers row packing. Refine both during a site survey.</p>
+              <p className="fine-print">The fit uses the traced polygon, a {decimal.format(panelLayout.setbackM)} m boundary setback and published Jinko module dimensions. {installType === "ground" ? `Ground rows include a preliminary ${decimal.format(panelLayout.rowGapM)} m gap.` : "Roof modules include a 40 mm inter-module gap."} Chimneys, shade, access routes and structural limits still require a site survey.</p>
             </aside>
           </section>
         ) : null}
@@ -1201,17 +1437,49 @@ export function SolarPlanner() {
               </div>
 
               <div className="input-section">
-                <div className="input-section-heading"><strong>Monthly usage</strong><span>From your latest bill</span></div>
-                <div className="metric-inputs">
-                  <div className="metric-field">
-                    <div className="field-label-row"><label htmlFor="monthly-kwh">Electricity used</label><FieldHelp title="electricity used">Kilowatt-hours (kWh) measure energy consumed over time. Use the 12-month average from your bills if available; this directly drives array size.</FieldHelp></div>
-                    <div className="input-with-unit"><input id="monthly-kwh" name="monthlyKwh" type="number" min={50} max={10000} value={monthlyKwh} aria-invalid={monthlyKwh < 50 || monthlyKwh > 10000} onChange={(event) => setMonthlyKwh(Number(event.target.value))} /><em>kWh / month</em></div>
-                  </div>
-                  <div className="metric-field">
-                    <div className="field-label-row"><label htmlFor="monthly-bill">Average bill</label><FieldHelp title="average electricity bill">Enter the normal monthly amount in Namibian dollars. It is shown as financial context only; it does not change electrical sizing because tariffs and fixed charges vary.</FieldHelp></div>
-                    <div className="input-with-unit"><input id="monthly-bill" name="monthlyBillNad" type="number" min={0} value={monthlyBill} aria-invalid={monthlyBill < 0} onChange={(event) => setMonthlyBill(Number(event.target.value))} /><em>N$ / month</em></div>
-                  </div>
+                <div className="input-section-heading energy-usage-heading">
+                  <div><strong>Electricity usage</strong><FieldHelp title="electricity usage">Kilowatt-hours (kWh) measure energy consumed over time. Twelve bill values capture seasonal use more accurately; the quick average is suitable when only one representative bill is available.</FieldHelp></div>
+                  <span>Use billed kWh, not the N$ amount</span>
                 </div>
+                <div className="usage-mode-toggle" role="group" aria-label="Electricity usage entry method">
+                  <button className={usageMode === "average" ? "is-selected" : ""} type="button" aria-pressed={usageMode === "average"} onClick={() => {
+                    if (usageMode === "monthly") setMonthlyKwh(Math.round(averageMonthlyKwh));
+                    setUsageMode("average");
+                  }}>Quick average</button>
+                  <button className={usageMode === "monthly" ? "is-selected" : ""} type="button" aria-pressed={usageMode === "monthly"} onClick={() => {
+                    if (usageMode === "average") setMonthlyUsage(Array.from({ length: 12 }, () => monthlyKwh));
+                    setUsageMode("monthly");
+                  }}>12-month profile</button>
+                </div>
+
+                {usageMode === "average" ? (
+                  <div className="metric-inputs">
+                    <div className="metric-field">
+                      <div className="field-label-row"><label htmlFor="monthly-kwh">Average electricity used</label><FieldHelp title="average electricity used">Use the average billed kWh per month. If your bills vary materially by season, switch to the 12-month profile.</FieldHelp></div>
+                      <div className="input-with-unit"><input id="monthly-kwh" name="monthlyKwh" type="number" min={50} max={10000} value={monthlyKwh} aria-invalid={monthlyKwh < 50 || monthlyKwh > 10000} onChange={(event) => setMonthlyKwh(Number(event.target.value))} /><em>kWh / month</em></div>
+                    </div>
+                    <div className="metric-field">
+                      <div className="field-label-row"><label htmlFor="monthly-bill">Average bill</label><FieldHelp title="average electricity bill">Enter the normal monthly amount in Namibian dollars. It is shown as financial context only; it does not change electrical sizing because tariffs and fixed charges vary.</FieldHelp></div>
+                      <div className="input-with-unit"><input id="monthly-bill" name="monthlyBillNad" type="number" min={0} value={monthlyBill} aria-invalid={monthlyBill < 0} onChange={(event) => setMonthlyBill(Number(event.target.value))} /><em>N$ / month</em></div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="monthly-profile-grid">
+                      {MONTH_LABELS.map((month, index) => (
+                        <label key={month} htmlFor={`usage-${month.toLowerCase()}`}>
+                          <span>{month}</span>
+                          <div className="month-input"><input id={`usage-${month.toLowerCase()}`} name={`usage${month}Kwh`} type="number" min={0} max={10000} value={monthlyUsage[index]} aria-invalid={!Number.isFinite(monthlyUsage[index]) || monthlyUsage[index] < 0 || monthlyUsage[index] > 10000} onChange={(event) => setMonthlyUsage((current) => current.map((value, valueIndex) => valueIndex === index ? Number(event.target.value) : value))} /><em>kWh</em></div>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="profile-summary-row">
+                      <span><small>Annual usage</small><strong>{Math.round(annualLoadKwh).toLocaleString()} kWh</strong></span>
+                      <span><small>Monthly average</small><strong>{Math.round(averageMonthlyKwh).toLocaleString()} kWh</strong></span>
+                      <label htmlFor="monthly-bill-profile"><small>Average bill</small><div className="input-with-unit"><input id="monthly-bill-profile" name="monthlyBillNad" type="number" min={0} value={monthlyBill} aria-invalid={monthlyBill < 0} onChange={(event) => setMonthlyBill(Number(event.target.value))} /><em>N$ / month</em></div></label>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="input-section">
@@ -1244,7 +1512,7 @@ export function SolarPlanner() {
                 </div>
               ) : null}
 
-              {!energyProfileValid ? <p className="validation-message" role="status" aria-live="polite">Check the highlighted values before calculating. Usage must be 50–10,000 kWh/month and connection or backup values must stay within the shown limits.</p> : null}
+              {!energyProfileValid ? <p className="validation-message" role="status" aria-live="polite">Check the highlighted values before calculating. Annual usage must equal 600–120,000 kWh, each monthly value must be 0–10,000 kWh, and connection or backup values must stay within the shown limits.</p> : null}
 
               <div className="form-footer-actions">
                 <button className="button button-secondary" type="button" onClick={() => goToStep(1)}>← Back</button>
@@ -1256,12 +1524,13 @@ export function SolarPlanner() {
               <span className="context-kicker">Your site</span>
               <h3>{locationName}</h3>
               <dl className="context-stats">
-                <div><dt>Usable surface</dt><dd>{number.format(usableArea)} m²</dd></div>
-                <div><dt>Physical limit</dt><dd>{maxPanels} panels</dd></div>
+                <div><dt>Traced surface</dt><dd>{number.format(rawArea)} m²</dd></div>
+                <div><dt>Geometric fit</dt><dd>{maxPanels} panels</dd></div>
                 <div><dt>Reference panel</dt><dd>{REFERENCE_PANEL.powerWatts} W Jinko</dd></div>
-                <div><dt>Planning yield</dt><dd>{SPECIFIC_YIELD_KWH_PER_KWP.toLocaleString()} kWh/kWp/yr</dd></div>
+                <div><dt>Solar yield</dt><dd>{Math.round(solarYield.specificYieldKwhPerKwp).toLocaleString()} kWh/kWp/yr</dd></div>
               </dl>
-              <p>The bill amount is not used to size electrical equipment. Production uses a regional planning yield until orientation, shading and a site-specific solar-resource model are verified.</p>
+              <div className={`yield-status yield-${solarYield.status}`} role="status"><strong>{solarYield.status === "loading" ? "Updating solar data" : solarYield.source}</strong><span>{solarYield.detail}</span></div>
+              <p>The bill amount is not used for electrical sizing. Solar production now uses the site coordinates, entered tilt and direction; nearby shade and roof obstructions still require an on-site survey.</p>
             </aside>
           </section>
         ) : null}
@@ -1272,7 +1541,7 @@ export function SolarPlanner() {
               <div>
                 <p className="eyebrow eyebrow-light">Recommended starting point</p>
                 <h2 id="system-title">A {number.format(results.capacityKwp)} kWp {goal === "grid" ? "grid-tied" : goal === "hybrid" ? "hybrid" : "off-grid"} system</h2>
-                <p>Designed around {monthlyKwh.toLocaleString()} kWh monthly use and the surface you traced in {locationName}.</p>
+                <p>Designed around {Math.round(results.annualLoadKwh).toLocaleString()} kWh annual use and the surface you traced in {locationName}.</p>
               </div>
               <div className="confidence-card"><span>Estimate stage</span><strong>Planning</strong><small>Not yet a certified design or supplier quotation</small></div>
             </div>
@@ -1288,12 +1557,13 @@ export function SolarPlanner() {
             <div className="result-grid">
               <div className="layout-card">
                 <div className="card-heading-row"><div><p className="eyebrow">Surface layout</p><h3>{results.panels} full-size panels</h3></div><span className="capacity-badge">{number.format(results.capacityKwp)} kWp</span></div>
-                <div className="physical-fit-visual">
-                  <div><span>{results.panels}</span><small>panels selected</small></div>
-                  <div><span>{number.format(usableArea)} m²</span><small>usable surface</small></div>
-                  <div><span>{maxPanels}</span><small>panel physical limit</small></div>
+                <PanelLayoutPreview layout={panelLayout} selectedPanels={results.panels} />
+                <div className="layout-metrics">
+                  <span><small>Selected</small><strong>{results.panels} panels</strong></span>
+                  <span><small>Polygon capacity</small><strong>{maxPanels} panels</strong></span>
+                  <span><small>Module coverage</small><strong>{number.format(results.panels * panelArea)} m²</strong></span>
                 </div>
-                <div className="layout-note"><span>Indicative placement</span><span>{number.format(Math.max(0, usableArea * LAYOUT_PACKING_EFFICIENCY - results.panels * panelArea))} m² estimated packing reserve</span></div>
+                <div className="layout-note"><span>Preliminary geometric placement</span><span>{decimal.format(panelLayout.setbackM)} m edge setback · {decimal.format(panelLayout.rowGapM)} m row gap</span></div>
               </div>
 
               <div className="spec-card">
@@ -1309,21 +1579,41 @@ export function SolarPlanner() {
             </div>
 
             <div className="outcome-grid">
-              <article><span>Estimated generation</span><strong>{Math.round(results.annualGenerationKwh).toLocaleString()} kWh</strong><small>per year · regional planning model</small></article>
+              <article><span>Estimated generation</span><strong>{Math.round(results.annualGenerationKwh).toLocaleString()} kWh</strong><small>per year · {solarYield.status === "ready" ? "PVGIS site model" : "regional fallback"}</small></article>
               <article><span>Energy coverage</span><strong>{Math.round(results.coveragePercent)}%</strong><small>annual generation vs usage</small></article>
               <article><span>Installed-system price</span><strong>Quote required</strong><small>no fabricated inverter or installation allowance</small></article>
               <article><span>Current bill reference</span><strong>{money.format(monthlyBill)}</strong><small>per month · not used for electrical sizing</small></article>
             </div>
 
+            <section className="monthly-balance-card" aria-labelledby="monthly-balance-title">
+              <div className="card-heading-row">
+                <div><p className="eyebrow">Seasonal check</p><h3 id="monthly-balance-title">Monthly energy balance</h3></div>
+                <div className="balance-legend"><span><i className="usage-key" /> Usage</span><span><i className="solar-key" /> Solar</span></div>
+              </div>
+              <div className="monthly-balance-grid">
+                {MONTH_LABELS.map((month, index) => (
+                  <article key={month}>
+                    <div className="balance-bars" aria-hidden="true">
+                      <i className="usage-bar" style={{ height: `${(activeMonthlyUsage[index] / monthlyBalanceMaximum) * 100}%` }} />
+                      <i className="solar-bar" style={{ height: `${(monthlyProduction[index] / monthlyBalanceMaximum) * 100}%` }} />
+                    </div>
+                    <strong>{month}</strong>
+                    <small>{Math.round(activeMonthlyUsage[index])} / {Math.round(monthlyProduction[index])}</small>
+                  </article>
+                ))}
+              </div>
+              <p>{solarYield.monthlyKwhPerKwp ? "Usage and estimated PVGIS production" : "Usage and evenly distributed fallback production"} in kWh. This annual energy comparison does not model hourly self-consumption, export or battery dispatch.</p>
+            </section>
+
             <div className="assumption-row">
-              <div><strong>How this was calculated</strong><span>{SPECIFIC_YIELD_KWH_PER_KWP.toLocaleString()} kWh/kWp/year planning yield · {REFERENCE_PANEL.powerWatts} W named module · {Math.round(results.surfaceAllowance * 100)}% surface allowance · {Math.round((1 - LAYOUT_PACKING_EFFICIENCY) * 100)}% packing factor</span></div>
+              <div><strong>How this was calculated</strong><span>{Math.round(results.specificYieldKwhPerKwp).toLocaleString()} kWh/kWp/year · {pitch}° {direction.replace("-", " ")} surface · {REFERENCE_PANEL.powerWatts} W named module · polygon fit with {decimal.format(panelLayout.setbackM)} m setback</span><a href="https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis_en" target="_blank" rel="noreferrer">Solar-resource methodology: European Commission PVGIS ↗</a></div>
               <span className="version-tag">{ENGINE_VERSION}</span>
             </div>
 
             <div className="calculation-audit" aria-label="Calculation details">
-              <article><span>Array sizing</span><strong>{decimal.format(results.annualLoadKwh)} kWh/year load</strong><p>Annual load × goal coverage ÷ planning yield, rounded up to whole {REFERENCE_PANEL.powerWatts} W modules.</p></article>
+              <article><span>Array sizing</span><strong>{decimal.format(results.annualLoadKwh)} kWh/year load</strong><p>Annual load × goal coverage ÷ site-specific yield, rounded up to whole {REFERENCE_PANEL.powerWatts} W modules and capped by the polygon fit.</p></article>
               <article><span>Battery sizing</span><strong>{results.batteryKwh ? `${decimal.format(results.requiredUsableBatteryKwh)} kWh usable → ${decimal.format(results.batteryKwh)} kWh nominal` : "No mandatory storage"}</strong><p>{Math.round(BATTERY_DEPTH_OF_DISCHARGE * 100)}% depth of discharge · {Math.round(BATTERY_PATH_EFFICIENCY * 100)}% path efficiency · {Math.round((BATTERY_DESIGN_RESERVE - 1) * 100)}% reserve.</p></article>
-              <article><span>Still needs verification</span><strong>Shade, orientation, structure and equipment matching</strong><p>Final strings, protection, export limits, warranties and installation scope belong in the installer design and supplier bill of materials.</p></article>
+              <article><span>Still needs verification</span><strong>Shade, structure, obstacles and equipment matching</strong><p>Final strings, protection, export limits, fire access, warranties and installation scope belong in the installer design and supplier bill of materials.</p></article>
             </div>
 
             <div className="result-actions">

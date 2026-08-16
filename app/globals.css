@@ -838,10 +838,15 @@ h1 {
 }
 
 .coordinate-grid,
+.surface-geometry-grid,
 .metric-inputs {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 11px;
+}
+
+.surface-geometry-grid {
+  margin-top: 12px;
 }
 
 .coordinate-grid {
@@ -1084,6 +1089,109 @@ select {
   font-size: 10px;
 }
 
+.energy-usage-heading {
+  align-items: center;
+}
+
+.energy-usage-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  margin: -3px 0 14px;
+  background: #eff0eb;
+  border-radius: 9px;
+}
+
+.usage-mode-toggle button {
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 720;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.usage-mode-toggle button.is-selected {
+  color: var(--blue);
+  background: white;
+  box-shadow: 0 3px 10px rgba(30, 42, 36, 0.07);
+}
+
+.monthly-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.monthly-profile-grid label,
+.profile-summary-row label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.month-input {
+  position: relative;
+}
+
+.month-input input {
+  min-width: 0;
+  padding-right: 36px;
+  font-variant-numeric: tabular-nums;
+}
+
+.month-input em {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  color: var(--ink-soft);
+  font-size: 8px;
+  font-style: normal;
+  transform: translateY(-50%);
+}
+
+.profile-summary-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  padding-top: 14px;
+}
+
+.profile-summary-row > span {
+  display: flex;
+  min-height: 44px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 7px 10px;
+  background: var(--blue-soft);
+  border-radius: 8px;
+}
+
+.profile-summary-row small {
+  color: var(--ink-soft);
+  font-size: 8px;
+}
+
+.profile-summary-row strong {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
 .input-with-unit {
   position: relative;
 }
@@ -1171,6 +1279,37 @@ select {
 .context-stats dd {
   margin: 0;
   font-weight: 720;
+}
+
+.yield-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 12px;
+  margin-top: 14px;
+  background: #edf5ff;
+  border: 1px solid #d4e5fb;
+  border-radius: 8px;
+}
+
+.yield-status strong {
+  color: var(--blue-dark);
+  font-size: 9px;
+}
+
+.yield-status span {
+  color: var(--ink-soft);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.yield-fallback {
+  background: #fff6df;
+  border-color: #ead9a8;
+}
+
+.yield-fallback strong {
+  color: #6d5d39;
 }
 
 .context-card > p {
@@ -1292,10 +1431,9 @@ select {
   height: 360px;
 }
 
-.physical-fit-visual {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 9px;
+.panel-layout-preview,
+.panel-layout-empty {
+  position: relative;
   min-height: 230px;
   padding: 16px;
   background:
@@ -1307,30 +1445,91 @@ select {
   border-radius: 11px;
 }
 
-.physical-fit-visual > div {
+.panel-layout-preview svg {
+  display: block;
+  width: 100%;
+  height: 250px;
+  overflow: visible;
+}
+
+.layout-surface {
+  fill: rgba(12, 40, 31, 0.09);
+  stroke: #768b82;
+  stroke-width: 0.1;
+  vector-effect: non-scaling-stroke;
+}
+
+.layout-panel {
+  fill: #145fc1;
+  stroke: #d7e9ff;
+  stroke-width: 0.045;
+  vector-effect: non-scaling-stroke;
+}
+
+.layout-preview-key {
+  position: absolute;
+  right: 13px;
+  bottom: 11px;
+  display: flex;
+  gap: 11px;
+  padding: 6px 8px;
+  color: var(--ink-soft);
+  font-size: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 6px;
+}
+
+.layout-preview-key span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.layout-preview-key i {
+  width: 8px;
+  height: 8px;
+  background: #145fc1;
+  border-radius: 2px;
+}
+
+.layout-preview-key span:last-child i {
+  background: #dce4e0;
+  border: 1px solid #768b82;
+}
+
+.panel-layout-empty {
+  display: grid;
+  place-items: center;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-align: center;
+}
+
+.layout-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.layout-metrics span {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  justify-content: flex-end;
-  padding: 17px;
-  color: white;
-  background: linear-gradient(145deg, #1c65c7, #0e3e78);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 9px;
-  box-shadow: 0 14px 28px rgba(17, 72, 139, 0.16);
+  padding: 10px 11px;
+  background: #f7f8f5;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
-.physical-fit-visual span {
-  overflow-wrap: anywhere;
-  font-size: clamp(21px, 2.2vw, 32px);
-  font-weight: 760;
-  letter-spacing: -0.045em;
+.layout-metrics small {
+  color: var(--ink-soft);
+  font-size: 8px;
 }
 
-.physical-fit-visual small {
-  margin-top: 7px;
-  color: #d7e9ff;
-  font-size: 9px;
+.layout-metrics strong {
+  margin-top: 4px;
+  font-size: 11px;
 }
 
 .layout-note {
@@ -1423,6 +1622,97 @@ select {
   font-size: 9px;
 }
 
+.monthly-balance-card {
+  padding: 22px;
+  margin-bottom: 18px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+}
+
+.monthly-balance-card .card-heading-row {
+  align-items: center;
+}
+
+.balance-legend {
+  display: flex;
+  gap: 12px;
+  color: var(--ink-soft);
+  font-size: 9px;
+}
+
+.balance-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.balance-legend i {
+  width: 8px;
+  height: 8px;
+  background: #89958f;
+  border-radius: 2px;
+}
+
+.balance-legend .solar-key {
+  background: var(--blue);
+}
+
+.monthly-balance-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.monthly-balance-grid article {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.balance-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  height: 105px;
+  padding: 6px 3px 0;
+  background: #f5f7f4;
+  border-radius: 5px 5px 0 0;
+}
+
+.balance-bars i {
+  width: min(9px, 38%);
+  min-height: 2px;
+  background: #89958f;
+  border-radius: 2px 2px 0 0;
+}
+
+.balance-bars .solar-bar {
+  background: var(--blue);
+}
+
+.monthly-balance-grid strong {
+  font-size: 9px;
+}
+
+.monthly-balance-grid small {
+  color: var(--ink-soft);
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.monthly-balance-card > p {
+  margin: 14px 0 0;
+  color: var(--ink-soft);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
 .assumption-row,
 .comparison-callout {
   display: flex;
@@ -1445,6 +1735,14 @@ select {
 
 .assumption-row span {
   color: var(--ink-soft);
+}
+
+.assumption-row a {
+  width: fit-content;
+  color: var(--blue);
+  font-size: 9px;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .version-tag {
@@ -1921,6 +2219,11 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .monthly-balance-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    row-gap: 14px;
+  }
+
   .footer {
     grid-template-columns: 1fr 1fr;
   }
@@ -2024,17 +2327,30 @@ select {
   }
 
   .coordinate-grid,
+  .surface-geometry-grid,
   .metric-inputs,
   .goal-grid,
   .outcome-grid,
-  .physical-fit-visual,
   .calculation-audit,
   .public-kit-grid {
     grid-template-columns: 1fr;
   }
 
-  .physical-fit-visual {
-    min-height: auto;
+  .monthly-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-summary-row,
+  .layout-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .monthly-balance-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .panel-layout-preview svg {
+    height: 210px;
   }
 
   .goal-card {
@@ -2042,6 +2358,7 @@ select {
   }
 
   .input-section-heading,
+  .energy-usage-heading,
   .form-footer-actions,
   .result-actions,
   .layout-note,
@@ -2165,6 +2482,10 @@ select {
   .quote-panel,
   .result-hero {
     padding: 22px;
+  }
+
+  .monthly-balance-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

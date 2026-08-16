@@ -60,16 +60,23 @@ test("keeps supplier evidence and product metadata in the app", async () => {
 });
 
 test("uses traceable calculations without fabricated installed budgets", async () => {
-  const [planner, calculator] = await Promise.all([
+  const [planner, calculator, panelLayout, yieldRoute] = await Promise.all([
     readFile(new URL("../app/solar-planner.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/solar-calculator.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/panel-layout.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/solar-yield/route.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(planner, /Installed-system price/);
   assert.match(planner, /Quote required/);
   assert.match(planner, /FieldHelp/);
+  assert.match(planner, /12-month profile/);
+  assert.match(planner, /Monthly energy balance/);
   assert.match(calculator, /BATTERY_DEPTH_OF_DISCHARGE/);
-  assert.match(calculator, /LAYOUT_PACKING_EFFICIENCY/);
+  assert.match(panelLayout, /safelyInside/);
+  assert.match(panelLayout, /GROUND_ROW_GAP_M/);
+  assert.match(yieldRoute, /api\/v5_3\/PVcalc/);
+  assert.match(yieldRoute, /systemLossPercent: 14/);
   assert.doesNotMatch(planner, /installationAllowance|inverterAllowance|lowBudget|highBudget/);
 });
 

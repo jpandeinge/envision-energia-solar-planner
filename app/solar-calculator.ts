@@ -1,13 +1,13 @@
-import { REFERENCE_PANEL } from "./solar-catalogue";
-
 export type SolarGoal = "grid" | "hybrid" | "offgrid";
 export type InstallationType = "roof" | "ground";
 export type SupplyPhase = "Single phase" | "Three phase" | "Not sure";
 
 export type SolarPlanInput = {
-  rawAreaM2: number;
-  installType: InstallationType;
-  monthlyKwh: number;
+  annualLoadKwh: number;
+  specificYieldKwhPerKwp: number;
+  maxPanels: number;
+  panelPowerWatts: number;
+  panelFootprintM2: number;
   goal: SolarGoal;
   phase: SupplyPhase;
   breakerAmps: number;
@@ -15,10 +15,8 @@ export type SolarPlanInput = {
   criticalLoadKw: number;
 };
 
-export const ENGINE_VERSION = "planning-engine-0.2.0";
-export const SPECIFIC_YIELD_KWH_PER_KWP = 1720;
-export const SURFACE_ALLOWANCE = { roof: 0.22, ground: 0.15 } as const;
-export const LAYOUT_PACKING_EFFICIENCY = 0.9;
+export const ENGINE_VERSION = "planning-engine-0.3.0";
+export const FALLBACK_SPECIFIC_YIELD_KWH_PER_KWP = 1720;
 export const DC_AC_RATIO = 1.2;
 export const BATTERY_MODULE_KWH = 5.12;
 export const BATTERY_DEPTH_OF_DISCHARGE = 0.9;
@@ -44,45 +42,41 @@ function ceilToBatteryModule(kwh: number) {
 }
 
 export function calculateSolarPlan(input: SolarPlanInput) {
-  const rawAreaM2 = safeNumber(input.rawAreaM2);
-  const monthlyKwh = Math.max(1, safeNumber(input.monthlyKwh, 1));
+  const annualLoadKwh = Math.max(1, safeNumber(input.annualLoadKwh, 1));
+  const specificYieldKwhPerKwp = Math.max(
+    1,
+    safeNumber(
+      input.specificYieldKwhPerKwp,
+      FALLBACK_SPECIFIC_YIELD_KWH_PER_KWP,
+    ),
+  );
+  const maxPanels = Math.floor(safeNumber(input.maxPanels));
+  const panelPowerWatts = Math.max(1, safeNumber(input.panelPowerWatts, 1));
+  const panelFootprintM2 = safeNumber(input.panelFootprintM2);
   const criticalLoadKw = safeNumber(input.criticalLoadKw);
   const backupHours = safeNumber(input.backupHours);
-  const surfaceAllowance = SURFACE_ALLOWANCE[input.installType];
-  const usableAreaM2 = rawAreaM2 * (1 - surfaceAllowance);
-  const panelFootprintM2 =
-    (REFERENCE_PANEL.lengthMm / 1000) * (REFERENCE_PANEL.widthMm / 1000);
-  const maxPanels = Math.max(
-    0,
-    Math.floor(
-      (usableAreaM2 * LAYOUT_PACKING_EFFICIENCY) / panelFootprintM2,
-    ),
-  );
 
-  const annualLoadKwh = monthlyKwh * 12;
   const requiredArrayKwp =
-    (annualLoadKwh * TARGET_COVERAGE[input.goal]) /
-    SPECIFIC_YIELD_KWH_PER_KWP;
+    (annualLoadKwh * TARGET_COVERAGE[input.goal]) / specificYieldKwhPerKwp;
   const neededPanels = Math.max(
     1,
-    Math.ceil(
-      (requiredArrayKwp * 1000) / REFERENCE_PANEL.powerWatts,
-    ),
+    Math.ceil((requiredArrayKwp * 1000) / panelPowerWatts),
   );
-  const panels = Math.min(neededPanels, maxPanels || neededPanels);
-  const capacityKwp = (panels * REFERENCE_PANEL.powerWatts) / 1000;
-  const annualGenerationKwh = capacityKwp * SPECIFIC_YIELD_KWH_PER_KWP;
+  const panels = Math.min(neededPanels, maxPanels);
+  const capacityKwp = (panels * panelPowerWatts) / 1000;
+  const annualGenerationKwh = capacityKwp * specificYieldKwhPerKwp;
   const coveragePercent = Math.min(
     135,
     (annualGenerationKwh / annualLoadKwh) * 100,
   );
 
+  const averageDailyLoadKwh = annualLoadKwh / 365;
   const requiredUsableBatteryKwh =
     input.goal === "grid"
       ? 0
       : input.goal === "hybrid"
         ? criticalLoadKw * backupHours
-        : monthlyKwh / 30;
+        : averageDailyLoadKwh;
   const requiredNominalBatteryKwh =
     (requiredUsableBatteryKwh * BATTERY_DESIGN_RESERVE) /
     (BATTERY_DEPTH_OF_DISCHARGE * BATTERY_PATH_EFFICIENCY);
@@ -104,7 +98,8 @@ export function calculateSolarPlan(input: SolarPlanInput) {
 
   return {
     annualLoadKwh,
-    usableAreaM2,
+    averageDailyLoadKwh,
+    specificYieldKwhPerKwp,
     panelFootprintM2,
     maxPanels,
     neededPanels,
@@ -119,8 +114,6 @@ export function calculateSolarPlan(input: SolarPlanInput) {
     connectionCapacityKva,
     connectionReviewNeeded:
       connectionCapacityKva !== null && inverterKw > connectionCapacityKva,
-    constrained: maxPanels > 0 && neededPanels > maxPanels,
-    surfaceAllowance,
+    constrained: neededPanels > maxPanels,
   };
 }
-
