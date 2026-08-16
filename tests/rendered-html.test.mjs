@@ -55,8 +55,16 @@ test("keeps supplier evidence and product metadata in the app", async () => {
   assert.match(planner, /`N\$\$\{nadNumber\.format\(value\)\}`/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /\/og\.png/);
+  assert.match(layout, /\/favicon-32\.png/);
+  assert.match(layout, /\/apple-touch-icon\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  await access(new URL("../public/og.png", import.meta.url));
+  await Promise.all([
+    access(new URL("../public/og.png", import.meta.url)),
+    access(new URL("../public/favicon-16.png", import.meta.url)),
+    access(new URL("../public/favicon-32.png", import.meta.url)),
+    access(new URL("../public/favicon-192.png", import.meta.url)),
+    access(new URL("../public/apple-touch-icon.png", import.meta.url)),
+  ]);
 });
 
 test("uses traceable calculations without fabricated installed budgets", async () => {
