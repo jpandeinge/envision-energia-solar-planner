@@ -1,23 +1,23 @@
 # Envision Energia Solar Planner
 
-Customer-facing planning MVP for residential solar projects in Namibia.
+A production-oriented residential solar planning application for Namibia.
 
-## What this version does
+## Capabilities
 
-- captures coordinates and rooftop or ground installation type;
-- lets a user trace an installation surface on an interactive planning canvas;
-- estimates usable area and physical panel capacity;
-- sizes panels, inverter and LFP battery storage from energy needs and project goal;
-- shows calculation assumptions and space constraints;
-- compares versioned public supplier records with source links, timestamps, stock state, VAT scope and missing-data warnings;
-- explains every energy-profile variable with touch- and keyboard-accessible helpers;
-- prints a standardized planning brief for supplier quotations.
+- Google hybrid satellite map with Namibia-focused Places search and current-location startup.
+- Editable rooftop or ground polygon drawing preserved throughout the planning journey.
+- Geometric module placement using published panel dimensions, boundary setbacks and row gaps.
+- Roof or panel tilt and eight compass orientations.
+- Quick-average or twelve-month electricity-consumption entry.
+- Coordinate-, tilt- and orientation-specific PVGIS solar-production modelling, with a labelled resilience fallback.
+- Grid-tied, hybrid and off-grid array, inverter and LFP battery planning.
+- Monthly usage-versus-production comparison.
+- Source-linked Namibian supplier records and all monetary values in Namibian dollars.
+- Print-ready planning brief for normalized supplier quotations.
 
-This is a planning tool, not a certified electrical or structural design. Production use requires a licensed imagery/geocoding provider, live solar-resource data, distributor-aware tariff and regulation data, supplier-authorized catalog feeds, persistence, and installer validation.
+This remains a planning tool rather than a certified electrical or structural design. Shade, obstacles, structural loading, fire access, string design, protection and distributor approval require a qualified installer.
 
-The site is wired for Google Maps JavaScript API hybrid imagery and Namibia-restricted property search. Add a browser-restricted key to `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`; enable both Maps JavaScript API and Places API (New) in the same Google Cloud project. Drawing is implemented in the app because Google removed its legacy Drawing Library in May 2026.
-
-## Run locally
+## Local development
 
 ```bash
 npm install
@@ -25,25 +25,34 @@ cp .env.example .env.local
 npm run dev
 ```
 
-The local app is served at `http://localhost:3000` by default.
+Add a browser-restricted Google Maps key to `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`. Enable Maps JavaScript API and Places API (New) for that key.
 
 ## Quality checks
 
 ```bash
-npm run build
+npm test
 npm run lint
-node --test tests/rendered-html.test.mjs
 ```
 
-## Calculation snapshot
+The test suite covers the calculation engine, polygon module fit, PVGIS azimuth conversion, server rendering, current-location startup, supplier evidence and responsive comparison-table requirements.
 
-The version 0.2 planning engine uses:
+## Deployment
 
-- the named JinkoSolar JKM475M-7RL3 reference module (475 W, 2182 × 1029 × 35 mm) from the manufacturer datasheet;
-- 1,720 kWh/kWp/year planning yield;
-- 22% rooftop or 15% ground surface allowance plus a transparent 90% layout-packing factor;
+The application supports two build targets from the same source:
+
+- `npm run build` produces the current Cloudflare/Sites build.
+- `npm run build:vercel` uses the official vinext Nitro adapter and produces a Vercel Build Output API bundle in `.vercel/output`.
+
+For Vercel, configure `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` for Production, Preview and Development. The key remains browser-visible by design and must be restricted by allowed website referrers and enabled APIs in Google Cloud.
+
+## Calculation model
+
+The current planning engine uses:
+
+- the named JinkoSolar JKM475M-7RL3 reference module at 475 W and 2182 × 1029 × 35 mm;
+- live PVGIS 5.3 specific yield and monthly production for the selected coordinates, tilt and direction;
+- a 1,720 kWh/kWp/year fallback only when PVGIS cannot be reached;
+- polygon-based module fit with explicit setbacks and installation-type row gaps;
 - 5.12 kWh modular LFP storage increments;
-- explicit battery depth-of-discharge, conversion-efficiency and design-reserve factors;
-- no fabricated inverter, balance-of-system or installation prices. A complete price remains “quote required” until a supplier-authorized bill of materials is available.
-
-All assumptions are visible in the customer journey. Supplier records are dated and source-linked; live accuracy still requires supplier-authorized feeds or a managed catalogue refresh process.
+- explicit depth-of-discharge, conversion-efficiency and design-reserve factors;
+- no fabricated inverter, balance-of-system or installation prices.
