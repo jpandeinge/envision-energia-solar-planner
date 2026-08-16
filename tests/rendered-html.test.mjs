@@ -48,6 +48,9 @@ test("keeps supplier evidence and product metadata in the app", async () => {
   assert.match(planner, /Electro Dynamics/);
   assert.match(planner, /Pupkewitz Megatech ReEnSol/);
   assert.match(planner, /Verified/);
+  assert.match(planner, /NEXT_PUBLIC_GOOGLE_MAPS_API_KEY/);
+  assert.match(planner, /MapTypeId\.HYBRID/);
+  assert.match(planner, /`N\$\$\{nadNumber\.format\(value\)\}`/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /\/og\.png/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

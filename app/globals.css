@@ -455,6 +455,85 @@ h1 {
   border-radius: 11px;
 }
 
+.google-map-shell,
+.hybrid-map-fallback {
+  position: relative;
+  width: 100%;
+  min-height: 490px;
+  overflow: hidden;
+  background: #24372f;
+  border-radius: 11px;
+}
+
+.google-map-shell.is-compact,
+.hybrid-map-fallback.is-compact {
+  min-height: 210px;
+  height: 210px;
+}
+
+.google-map {
+  width: 100%;
+  min-height: 490px;
+}
+
+.is-compact .google-map {
+  min-height: 210px;
+  height: 210px;
+}
+
+.map-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-size: 12px;
+  background: #24372f;
+}
+
+.google-map-badge {
+  position: absolute;
+  z-index: 3;
+  top: 15px;
+  right: 15px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  color: white;
+  font-size: 10px;
+  background: rgba(17, 37, 29, 0.82);
+  border-radius: 7px;
+  pointer-events: none;
+}
+
+.map-key-note {
+  position: absolute;
+  z-index: 4;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  max-width: 310px;
+  padding: 12px 14px;
+  color: white;
+  background: rgba(12, 31, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  backdrop-filter: blur(12px);
+}
+
+.map-key-note strong {
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.map-key-note span {
+  color: #c5d3cc;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
 .site-canvas {
   display: block;
   width: 100%;
@@ -796,13 +875,18 @@ select {
 }
 
 .mini-site .site-canvas-wrap,
-.mini-site .site-canvas {
+.mini-site .site-canvas,
+.mini-site .google-map-shell,
+.mini-site .hybrid-map-fallback,
+.mini-site .google-map {
   min-height: 210px;
   height: 210px;
 }
 
 .mini-site .map-layer-badge,
-.mini-site .map-scale {
+.mini-site .map-scale,
+.mini-site .map-key-note,
+.mini-site .google-map-badge {
   display: none;
 }
 
@@ -1371,7 +1455,10 @@ select {
   }
 
   .site-canvas-wrap,
-  .site-canvas {
+  .site-canvas,
+  .google-map-shell,
+  .hybrid-map-fallback,
+  .google-map {
     min-height: 390px;
   }
 

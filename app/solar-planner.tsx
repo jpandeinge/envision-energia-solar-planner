@@ -10,8 +10,42 @@ import {
 } from "react";
 
 type Point = { x: number; y: number };
+type GeoPoint = { lat: number; lng: number };
 type Goal = "grid" | "hybrid" | "offgrid";
 type InstallType = "roof" | "ground";
+
+type GoogleMapClickEvent = {
+  latLng?: { lat: () => number; lng: () => number };
+};
+
+type GoogleMapsListener = { remove: () => void };
+type GoogleMapInstance = {
+  addListener: (
+    eventName: string,
+    handler: (event: GoogleMapClickEvent) => void,
+  ) => GoogleMapsListener;
+  setCenter: (center: GeoPoint) => void;
+};
+type GooglePolygonInstance = {
+  setMap: (map: GoogleMapInstance | null) => void;
+  setOptions: (options: Record<string, unknown>) => void;
+  setPath: (path: GeoPoint[]) => void;
+};
+type GoogleMapsNamespace = {
+  Map: new (
+    element: HTMLElement,
+    options: Record<string, unknown>,
+  ) => GoogleMapInstance;
+  Polygon: new (options: Record<string, unknown>) => GooglePolygonInstance;
+  MapTypeId: { HYBRID: string };
+};
+
+declare global {
+  interface Window {
+    google?: { maps: GoogleMapsNamespace };
+    __envisionGoogleMapsReady?: () => void;
+  }
+}
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 520;
@@ -30,6 +64,14 @@ const defaultSurface: Point[] = [
   { x: 198, y: 215 },
 ];
 
+const defaultGeoSurface: GeoPoint[] = [
+  { lat: -22.56084, lng: 17.06572 },
+  { lat: -22.56083, lng: 17.06588 },
+  { lat: -22.56093, lng: 17.0659 },
+  { lat: -22.56098, lng: 17.06579 },
+  { lat: -22.56094, lng: 17.0657 },
+];
+
 const steps = [
   { number: 1, label: "Site" },
   { number: 2, label: "Energy" },
@@ -37,11 +79,16 @@ const steps = [
   { number: 4, label: "Compare" },
 ];
 
-const money = new Intl.NumberFormat("en-NA", {
-  style: "currency",
-  currency: "NAD",
+const nadNumber = new Intl.NumberFormat("en-NA", {
+  style: "decimal",
   maximumFractionDigits: 0,
 });
+
+const money = {
+  format(value: number) {
+    return `N$${nadNumber.format(value)}`;
+  },
+};
 
 const number = new Intl.NumberFormat("en-NA", {
   maximumFractionDigits: 1,
@@ -56,6 +103,54 @@ function polygonArea(points: Point[]) {
     sum += current.x * next.y - next.x * current.y;
   }
   return Math.abs(sum / 2) * METRES_PER_PIXEL ** 2;
+}
+
+function geographicPolygonArea(points: GeoPoint[]) {
+  if (points.length < 3) return 0;
+  const earthRadius = 6_378_137;
+  const radians = Math.PI / 180;
+  let sum = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    sum +=
+      (next.lng - current.lng) *
+      radians *
+      (2 +
+        Math.sin(current.lat * radians) +
+        Math.sin(next.lat * radians));
+  }
+
+  return Math.abs((sum * earthRadius ** 2) / 2);
+}
+
+let googleMapsPromise: Promise<GoogleMapsNamespace> | null = null;
+
+function loadGoogleMaps(apiKey: string) {
+  if (window.google?.maps) return Promise.resolve(window.google.maps);
+  if (googleMapsPromise) return googleMapsPromise;
+
+  googleMapsPromise = new Promise<GoogleMapsNamespace>((resolve, reject) => {
+    window.__envisionGoogleMapsReady = () => {
+      if (window.google?.maps) resolve(window.google.maps);
+      else reject(new Error("Google Maps loaded without a maps namespace."));
+    };
+
+    const script = document.createElement("script");
+    const parameters = new URLSearchParams({
+      key: apiKey,
+      loading: "async",
+      callback: "__envisionGoogleMapsReady",
+      v: "weekly",
+    });
+    script.src = `https://maps.googleapis.com/maps/api/js?${parameters.toString()}`;
+    script.async = true;
+    script.onerror = () => reject(new Error("Google Maps could not be loaded."));
+    document.head.append(script);
+  });
+
+  return googleMapsPromise;
 }
 
 function pointInPolygon(point: Point, polygon: Point[]) {
@@ -275,9 +370,152 @@ function SiteCanvas({
   );
 }
 
+function HybridMap({
+  center,
+  geoPoints,
+  setGeoPoints,
+  points,
+  setPoints,
+  closed,
+  setClosed,
+  drawing,
+  installType,
+  compact = false,
+}: {
+  center: GeoPoint;
+  geoPoints: GeoPoint[];
+  setGeoPoints: (points: GeoPoint[]) => void;
+  points: Point[];
+  setPoints: (points: Point[]) => void;
+  closed: boolean;
+  setClosed: (closed: boolean) => void;
+  drawing: boolean;
+  installType: InstallType;
+  compact?: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<GoogleMapInstance | null>(null);
+  const polygonRef = useRef<GooglePolygonInstance | null>(null);
+  const mapsRef = useRef<GoogleMapsNamespace | null>(null);
+  const initialCenterRef = useRef(center);
+  const geoPointsRef = useRef(geoPoints);
+  const drawingRef = useRef(drawing);
+  const closedRef = useRef(closed);
+  const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+
+  useEffect(() => {
+    geoPointsRef.current = geoPoints;
+  }, [geoPoints]);
+
+  useEffect(() => {
+    drawingRef.current = drawing;
+    closedRef.current = closed;
+  }, [closed, drawing]);
+
+  useEffect(() => {
+    if (!apiKey || !containerRef.current) return;
+    let active = true;
+    let clickListener: GoogleMapsListener | null = null;
+
+    loadGoogleMaps(apiKey)
+      .then((maps) => {
+        if (!active || !containerRef.current) return;
+        mapsRef.current = maps;
+        const map = new maps.Map(containerRef.current, {
+          center: initialCenterRef.current,
+          zoom: compact ? 19 : 20,
+          mapTypeId: maps.MapTypeId.HYBRID,
+          mapTypeControl: true,
+          mapTypeControlOptions: { position: 3 },
+          streetViewControl: false,
+          fullscreenControl: !compact,
+          clickableIcons: false,
+          gestureHandling: "greedy",
+        });
+        mapRef.current = map;
+        polygonRef.current = new maps.Polygon({
+          map,
+          paths: geoPointsRef.current,
+          strokeColor: installType === "roof" ? "#a8ccff" : "#dff26b",
+          strokeOpacity: 1,
+          strokeWeight: 4,
+          fillColor: installType === "roof" ? "#146ef5" : "#dff26b",
+          fillOpacity: closedRef.current ? 0.28 : 0.12,
+          clickable: false,
+        });
+        clickListener = map.addListener("click", (event) => {
+          if (!drawingRef.current || closedRef.current || !event.latLng) return;
+          setGeoPoints([
+            ...geoPointsRef.current,
+            { lat: event.latLng.lat(), lng: event.latLng.lng() },
+          ]);
+        });
+        setMapStatus("ready");
+      })
+      .catch(() => {
+        if (active) setMapStatus("error");
+      });
+
+    return () => {
+      active = false;
+      clickListener?.remove();
+      polygonRef.current?.setMap(null);
+      polygonRef.current = null;
+      mapRef.current = null;
+    };
+  }, [apiKey, compact, installType, setGeoPoints]);
+
+  useEffect(() => {
+    mapRef.current?.setCenter(center);
+  }, [center]);
+
+  useEffect(() => {
+    polygonRef.current?.setPath(geoPoints);
+    polygonRef.current?.setOptions({
+      fillOpacity: closed ? 0.28 : 0.12,
+      strokeColor: installType === "roof" ? "#a8ccff" : "#dff26b",
+      fillColor: installType === "roof" ? "#146ef5" : "#dff26b",
+    });
+  }, [closed, geoPoints, installType]);
+
+  if (!apiKey || mapStatus === "error") {
+    return (
+      <div className={compact ? "hybrid-map-fallback is-compact" : "hybrid-map-fallback"}>
+        <SiteCanvas
+          points={points}
+          setPoints={setPoints}
+          closed={closed}
+          setClosed={setClosed}
+          drawing={drawing}
+          installType={installType}
+          panelCount={0}
+          showPanels={false}
+        />
+        <div className="map-key-note">
+          <strong>Google hybrid map integration ready</strong>
+          <span>A restricted Maps JavaScript API key is required to display live map tiles.</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={compact ? "google-map-shell is-compact" : "google-map-shell"}>
+      <div ref={containerRef} className="google-map" aria-label="Google hybrid satellite map" />
+      {mapStatus === "loading" ? <div className="map-loading">Loading hybrid imagery…</div> : null}
+      {drawing && !closed ? <div className="canvas-tip">Tap each corner, then choose “Close shape”</div> : null}
+      <div className="google-map-badge"><span className="status-dot" /> Hybrid · interactive</div>
+    </div>
+  );
+}
+
 export function SolarPlanner() {
   const [step, setStep] = useState(1);
   const [points, setPoints] = useState<Point[]>(defaultSurface);
+  const [geoPoints, setGeoPoints] = useState<GeoPoint[]>(defaultGeoSurface);
   const [closed, setClosed] = useState(true);
   const [drawing, setDrawing] = useState(false);
   const [installType, setInstallType] = useState<InstallType>("roof");
@@ -294,7 +532,17 @@ export function SolarPlanner() {
   const [criticalLoad, setCriticalLoad] = useState(1.8);
   const [locationMessage, setLocationMessage] = useState("");
 
-  const rawArea = polygonArea(points);
+  const mapCenter = useMemo(
+    () => ({
+      lat: Number(latitude) || -22.5609,
+      lng: Number(longitude) || 17.0658,
+    }),
+    [latitude, longitude],
+  );
+  const rawArea =
+    geoPoints.length >= 3
+      ? geographicPolygonArea(geoPoints)
+      : polygonArea(points);
   const usableRatio = installType === "roof" ? 0.78 : 0.85;
   const usableArea = rawArea * usableRatio;
   const panelArea = PANEL_WIDTH_METRES * PANEL_HEIGHT_METRES * 1.16;
@@ -345,12 +593,14 @@ export function SolarPlanner() {
 
   const resetSurface = useCallback(() => {
     setPoints([]);
+    setGeoPoints([]);
     setClosed(false);
     setDrawing(true);
   }, []);
 
   const useDemoSurface = useCallback(() => {
     setPoints(defaultSurface);
+    setGeoPoints(defaultGeoSurface);
     setClosed(true);
     setDrawing(false);
   }, []);
@@ -449,7 +699,10 @@ export function SolarPlanner() {
                   ◎
                 </button>
               </div>
-              <SiteCanvas
+              <HybridMap
+                center={mapCenter}
+                geoPoints={geoPoints}
+                setGeoPoints={setGeoPoints}
                 points={points}
                 setPoints={setPoints}
                 closed={closed}
@@ -459,12 +712,10 @@ export function SolarPlanner() {
                 }}
                 drawing={drawing}
                 installType={installType}
-                panelCount={results.panels}
-                showPanels={false}
               />
               <div className="map-footer">
                 <span>{latitude}, {longitude}</span>
-                <span>Concept canvas · licensed satellite imagery will replace this layer</span>
+                <span>Hybrid imagery · map content refresh dates vary by location</span>
               </div>
             </div>
 
@@ -510,7 +761,7 @@ export function SolarPlanner() {
 
               <div className="drawing-actions">
                 <button className="button button-secondary" type="button" onClick={resetSurface}>Draw again</button>
-                {!closed && points.length >= 3 ? (
+                {!closed && (geoPoints.length >= 3 || points.length >= 3) ? (
                   <button className="button button-secondary" type="button" onClick={() => { setClosed(true); setDrawing(false); }}>Close shape</button>
                 ) : null}
               </div>
@@ -579,7 +830,7 @@ export function SolarPlanner() {
               <span className="context-kicker">Your site</span>
               <h3>{locationName}</h3>
               <div className="mini-site">
-                <SiteCanvas points={points} setPoints={setPoints} closed={closed} setClosed={setClosed} drawing={false} installType={installType} panelCount={results.panels} showPanels={false} />
+                <HybridMap center={mapCenter} geoPoints={geoPoints} setGeoPoints={setGeoPoints} points={points} setPoints={setPoints} closed={closed} setClosed={setClosed} drawing={false} installType={installType} compact />
               </div>
               <dl className="context-stats">
                 <div><dt>Usable surface</dt><dd>{number.format(usableArea)} m²</dd></div>
