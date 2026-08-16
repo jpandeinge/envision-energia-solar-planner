@@ -1373,8 +1373,8 @@ export function SolarPlanner() {
             </div>
 
             <div className="quote-panel">
-              <div><p className="eyebrow eyebrow-light">Next step</p><h3>Turn this plan into comparable quotes.</h3><p>Share the same site, load and equipment brief with every supplier so the responses can be normalized line by line.</p></div>
-              <button className="button button-light" type="button" onClick={() => window.print()}>Print planning brief</button>
+              <div><p className="eyebrow eyebrow-light">Next step</p><h3>Save your solar planning brief.</h3><p>Print or save this plan as a PDF, then send the same site, energy and equipment requirements to each supplier. Using one brief makes their prices and equipment easier to compare fairly.</p></div>
+              <button className="button button-light" type="button" onClick={() => window.print()}>Print or save as PDF</button>
             </div>
 
             <div className="result-actions">

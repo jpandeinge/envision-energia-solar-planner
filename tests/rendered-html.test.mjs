@@ -97,3 +97,15 @@ test("keeps the supplier comparison readable without horizontal scrolling", asyn
   assert.match(styles, /\.supplier-table \{[\s\S]*?table-layout: fixed/);
   assert.doesNotMatch(styles, /\.supplier-table \{[\s\S]{0,120}min-width: 1060px/);
 });
+
+test("explains the print action in plain language", async () => {
+  const planner = await readFile(
+    new URL("../app/solar-planner.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(planner, /Save your solar planning brief\./);
+  assert.match(planner, /Print or save as PDF/);
+  assert.match(planner, /window\.print\(\)/);
+  assert.doesNotMatch(planner, /Turn this plan into comparable quotes\./);
+});
