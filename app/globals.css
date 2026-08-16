@@ -434,6 +434,59 @@ h1 {
   background: transparent;
 }
 
+.search-field-places {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.place-search-shell,
+.place-search-host,
+.place-search-host gmp-place-autocomplete {
+  width: 100%;
+  min-width: 0;
+}
+
+.place-search-shell {
+  position: relative;
+}
+
+.place-search-host gmp-place-autocomplete {
+  display: block;
+  height: 46px;
+  color: var(--ink);
+  color-scheme: light;
+  font: inherit;
+  background-color: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(30, 47, 40, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(18, 37, 29, 0.16);
+}
+
+.place-search-host gmp-place-autocomplete::part(input) {
+  min-height: 44px;
+}
+
+.place-search-host gmp-place-autocomplete::part(prediction-list) {
+  border-radius: 10px;
+}
+
+.place-search-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 15px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(30, 47, 40, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(18, 37, 29, 0.16);
+}
+
 .icon-button {
   width: 46px;
   height: 46px;

@@ -14,7 +14,7 @@ Customer-facing planning MVP for residential solar projects in Namibia.
 
 This is a planning tool, not a certified electrical or structural design. Production use requires a licensed imagery/geocoding provider, live solar-resource data, distributor-aware tariff and regulation data, supplier-authorized catalog feeds, persistence, and installer validation.
 
-The site is wired for Google Maps JavaScript API hybrid imagery. Add a browser-restricted key to `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`; enable Maps JavaScript API in the same Google Cloud project. Drawing is implemented in the app because Google removed its legacy Drawing Library in May 2026.
+The site is wired for Google Maps JavaScript API hybrid imagery and Namibia-restricted property search. Add a browser-restricted key to `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`; enable both Maps JavaScript API and Places API (New) in the same Google Cloud project. Drawing is implemented in the app because Google removed its legacy Drawing Library in May 2026.
 
 ## Run locally
 

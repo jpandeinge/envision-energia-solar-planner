@@ -18,6 +18,27 @@ type GoogleMapClickEvent = {
   latLng?: { lat: () => number; lng: () => number };
 };
 
+type GoogleLatLng = { lat: () => number; lng: () => number };
+type GooglePlace = {
+  displayName?: string;
+  formattedAddress?: string;
+  location?: GoogleLatLng;
+  fetchFields: (options: { fields: string[] }) => Promise<void>;
+};
+type GooglePlacePredictionSelectEvent = Event & {
+  placePrediction: { toPlace: () => GooglePlace };
+};
+type GooglePlaceAutocompleteElement = HTMLElement & {
+  placeholder: string;
+  includedRegionCodes: string[];
+  locationBias: { center: GeoPoint; radius: number } | null;
+};
+type GooglePlacesLibrary = {
+  PlaceAutocompleteElement: new (
+    options?: Record<string, unknown>,
+  ) => GooglePlaceAutocompleteElement;
+};
+
 type GoogleMapsListener = { remove: () => void };
 type GoogleMapInstance = {
   addListener: (
@@ -38,6 +59,7 @@ type GoogleMapsNamespace = {
   ) => GoogleMapInstance;
   Polygon: new (options: Record<string, unknown>) => GooglePolygonInstance;
   MapTypeId: { HYBRID: string };
+  importLibrary: (libraryName: "places") => Promise<GooglePlacesLibrary>;
 };
 
 declare global {
@@ -142,6 +164,7 @@ function loadGoogleMaps(apiKey: string) {
       key: apiKey,
       loading: "async",
       callback: "__envisionGoogleMapsReady",
+      libraries: "places",
       v: "weekly",
     });
     script.src = `https://maps.googleapis.com/maps/api/js?${parameters.toString()}`;
@@ -151,6 +174,118 @@ function loadGoogleMaps(apiKey: string) {
   });
 
   return googleMapsPromise;
+}
+
+function PlaceSearch({
+  center,
+  onPlaceSelect,
+  onSearchError,
+}: {
+  center: GeoPoint;
+  onPlaceSelect: (location: GeoPoint, label: string) => void;
+  onSearchError: (message: string) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const autocompleteRef = useRef<GooglePlaceAutocompleteElement | null>(null);
+  const initialCenterRef = useRef(center);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!apiKey || !host) {
+      setStatus("error");
+      return;
+    }
+
+    let active = true;
+    let autocomplete: GooglePlaceAutocompleteElement | null = null;
+
+    const handleSelect = async (event: Event) => {
+      const selection = event as GooglePlacePredictionSelectEvent;
+      try {
+        const place = selection.placePrediction.toPlace();
+        await place.fetchFields({
+          fields: ["displayName", "formattedAddress", "location"],
+        });
+        if (!active || !place.location) return;
+
+        onPlaceSelect(
+          { lat: place.location.lat(), lng: place.location.lng() },
+          place.formattedAddress ?? place.displayName ?? "Selected property",
+        );
+      } catch {
+        if (active) {
+          onSearchError("We could not open that result. Please try another place.");
+        }
+      }
+    };
+
+    const handleError = () => {
+      if (!active) return;
+      setStatus("error");
+      onSearchError(
+        "Property search is unavailable. Enable Places API (New) for this key, then try again.",
+      );
+    };
+
+    loadGoogleMaps(apiKey)
+      .then((maps) => maps.importLibrary("places"))
+      .then(({ PlaceAutocompleteElement }) => {
+        if (!active || !hostRef.current) return;
+        autocomplete = new PlaceAutocompleteElement();
+        autocomplete.placeholder = "Search a Namibian address or place";
+        autocomplete.includedRegionCodes = ["na"];
+        autocomplete.locationBias = {
+          center: initialCenterRef.current,
+          radius: 50_000,
+        };
+        autocomplete.setAttribute(
+          "aria-label",
+          "Search for a property in Namibia",
+        );
+        autocomplete.addEventListener("gmp-select", handleSelect);
+        autocomplete.addEventListener("gmp-error", handleError);
+        hostRef.current.replaceChildren(autocomplete);
+        autocompleteRef.current = autocomplete;
+        setStatus("ready");
+      })
+      .catch(handleError);
+
+    return () => {
+      active = false;
+      autocomplete?.removeEventListener("gmp-select", handleSelect);
+      autocomplete?.removeEventListener("gmp-error", handleError);
+      autocompleteRef.current = null;
+    };
+  }, [apiKey, onPlaceSelect, onSearchError]);
+
+  useEffect(() => {
+    if (autocompleteRef.current) {
+      autocompleteRef.current.locationBias = { center, radius: 50_000 };
+    }
+  }, [center]);
+
+  if (!apiKey || status === "error") {
+    return (
+      <input
+        aria-label="Property search unavailable"
+        disabled
+        placeholder="Enable Places API (New) to search"
+      />
+    );
+  }
+
+  return (
+    <div className="place-search-shell" aria-busy={status === "loading"}>
+      <div ref={hostRef} className="place-search-host" />
+      {status === "loading" ? (
+        <span className="place-search-loading">Loading property search…</span>
+      ) : null}
+    </div>
+  );
 }
 
 function pointInPolygon(point: Point, polygon: Point[]) {
@@ -605,6 +740,24 @@ export function SolarPlanner() {
     setDrawing(false);
   }, []);
 
+  const selectPropertyLocation = useCallback(
+    (location: GeoPoint, label: string) => {
+      setLatitude(location.lat.toFixed(6));
+      setLongitude(location.lng.toFixed(6));
+      setLocationName(label);
+      setPoints([]);
+      setGeoPoints([]);
+      setClosed(false);
+      setDrawing(true);
+      setLocationMessage(`${label} selected. Trace the usable installation area.`);
+    },
+    [],
+  );
+
+  const handleSearchError = useCallback((message: string) => {
+    setLocationMessage(message);
+  }, []);
+
   const getCurrentLocation = () => {
     if (!("geolocation" in navigator)) {
       setLocationMessage("Location access is not supported by this browser.");
@@ -613,10 +766,13 @@ export function SolarPlanner() {
     setLocationMessage("Locating…");
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLatitude(position.coords.latitude.toFixed(6));
-        setLongitude(position.coords.longitude.toFixed(6));
-        setLocationName("Current location");
-        setLocationMessage("Coordinates updated. Confirm the property on the map.");
+        selectPropertyLocation(
+          {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          },
+          "Current location",
+        );
       },
       () => setLocationMessage("We could not access your location. Enter coordinates instead."),
       { enableHighAccuracy: true, timeout: 8000 },
@@ -685,14 +841,11 @@ export function SolarPlanner() {
           <section className="planner-grid" aria-labelledby="site-title">
             <div className="map-card">
               <div className="map-toolbar">
-                <div className="search-field">
-                  <span aria-hidden="true">⌕</span>
-                  <label className="sr-only" htmlFor="location-search">Property location</label>
-                  <input
-                    id="location-search"
-                    value={locationName}
-                    onChange={(event) => setLocationName(event.target.value)}
-                    placeholder="Search an address or place"
+                <div className="search-field search-field-places">
+                  <PlaceSearch
+                    center={mapCenter}
+                    onPlaceSelect={selectPropertyLocation}
+                    onSearchError={handleSearchError}
                   />
                 </div>
                 <button className="icon-button" type="button" onClick={getCurrentLocation} aria-label="Use current location">
@@ -714,7 +867,7 @@ export function SolarPlanner() {
                 installType={installType}
               />
               <div className="map-footer">
-                <span>{latitude}, {longitude}</span>
+                <span>{locationName} · {latitude}, {longitude}</span>
                 <span>Hybrid imagery · map content refresh dates vary by location</span>
               </div>
             </div>
