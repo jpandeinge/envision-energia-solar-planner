@@ -1346,12 +1346,12 @@ export function SolarPlanner() {
                 <tbody>
                   {supplierComparisons.map((offer) => (
                     <tr key={offer.id}>
-                      <td><strong>{offer.supplier}</strong><small>{offer.supplierType}</small></td>
-                      <td><strong>{offer.productName}</strong><small>SKU {offer.sku} · {offer.equivalentCount} panels for approximately {number.format(results.capacityKwp)} kWp</small></td>
-                      <td><strong>{offer.powerWatts} W</strong><small>{offer.dimensionsMm ? `${offer.dimensionsMm.length} × ${offer.dimensionsMm.width} × ${offer.dimensionsMm.depth} mm` : "Exact dimensions not publicly listed"}</small></td>
-                      <td>{offer.subtotalNad === null ? <><strong>Quote required</strong><small>No public selling price claimed</small></> : <><strong>{money.format(offer.subtotalNad)}</strong><small>{money.format(offer.priceNad ?? 0)} each · {money.format((offer.priceNad ?? 0) / offer.powerWatts)} / W · {offer.vatStatus}</small></>}</td>
-                      <td><span className={offer.availabilityTone === "available" ? "fresh-badge" : offer.availabilityTone === "unavailable" ? "unavailable-badge" : "quote-badge"}>{offer.availability}</span><small>Complete matched system still requires a supplier quote</small></td>
-                      <td><span className="fresh-badge">Checked</span><small>{formatObservedAt(offer.observedAt)}</small><a className="table-link" href={offer.sourceUrl} target="_blank" rel="noreferrer">Supplier source ↗</a>{offer.specificationUrl ? <a className="table-link secondary-source" href={offer.specificationUrl} target="_blank" rel="noreferrer">Manufacturer spec ↗</a> : null}</td>
+                      <td data-label="Supplier"><strong>{offer.supplier}</strong><small>{offer.supplierType}</small></td>
+                      <td data-label="Verified Product"><strong>{offer.productName}</strong><small>SKU {offer.sku} · {offer.equivalentCount} panels for approximately {number.format(results.capacityKwp)} kWp</small></td>
+                      <td data-label="Power & Dimensions"><strong>{offer.powerWatts} W</strong><small>{offer.dimensionsMm ? `${offer.dimensionsMm.length} × ${offer.dimensionsMm.width} × ${offer.dimensionsMm.depth} mm` : "Exact dimensions not publicly listed"}</small></td>
+                      <td data-label="Equivalent Panel Price">{offer.subtotalNad === null ? <><strong>Quote required</strong><small>No public selling price claimed</small></> : <><strong>{money.format(offer.subtotalNad)}</strong><small>{money.format(offer.priceNad ?? 0)} each · {money.format((offer.priceNad ?? 0) / offer.powerWatts)} / W · {offer.vatStatus}</small></>}</td>
+                      <td data-label="Availability"><span className={offer.availabilityTone === "available" ? "fresh-badge" : offer.availabilityTone === "unavailable" ? "unavailable-badge" : "quote-badge"}>{offer.availability}</span><small>Complete matched system still requires a supplier quote</small></td>
+                      <td data-label="Evidence"><span className="fresh-badge">Checked</span><small>{formatObservedAt(offer.observedAt)}</small><a className="table-link" href={offer.sourceUrl} target="_blank" rel="noreferrer">Supplier source ↗</a>{offer.specificationUrl ? <a className="table-link secondary-source" href={offer.specificationUrl} target="_blank" rel="noreferrer">Manufacturer spec ↗</a> : null}</td>
                     </tr>
                   ))}
                 </tbody>

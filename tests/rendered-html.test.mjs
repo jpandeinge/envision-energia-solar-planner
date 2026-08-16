@@ -84,3 +84,16 @@ test("requests the user's current location on first load with a safe fallback", 
   assert.match(planner, /maximumAge: 300000/);
   assert.match(planner, /demo fallback/);
 });
+
+test("keeps the supplier comparison readable without horizontal scrolling", async () => {
+  const [planner, styles] = await Promise.all([
+    readFile(new URL("../app/solar-planner.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(planner, /data-label="Equivalent Panel Price"/);
+  assert.match(styles, /@media \(max-width: 1280px\)/);
+  assert.match(styles, /content: attr\(data-label\)/);
+  assert.match(styles, /\.supplier-table \{[\s\S]*?table-layout: fixed/);
+  assert.doesNotMatch(styles, /\.supplier-table \{[\s\S]{0,120}min-width: 1060px/);
+});
