@@ -461,7 +461,7 @@ h1 {
   left: 26px;
   display: flex;
   gap: 8px;
-  width: min(420px, calc(100% - 52px));
+  width: min(540px, calc(100% - 52px));
 }
 
 .search-field {
@@ -2107,6 +2107,16 @@ select {
 
 .footer > span {
   text-align: right;
+}
+
+@media (min-width: 1041px) {
+  .journey-step-1 {
+    grid-template-columns: minmax(560px, 1.12fr) minmax(400px, 0.88fr);
+  }
+
+  .journey-step-1 :is(.site-canvas-wrap, .site-canvas, .google-map-shell, .hybrid-map-fallback, .google-map) {
+    min-height: clamp(580px, 66vh, 700px);
+  }
 }
 
 @media (max-width: 1280px) {
