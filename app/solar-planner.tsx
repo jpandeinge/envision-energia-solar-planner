@@ -114,6 +114,7 @@ declare global {
   interface Window {
     google?: { maps: GoogleMapsNamespace };
     __envisionGoogleMapsReady?: () => void;
+    gm_authFailure?: () => void;
   }
 }
 
@@ -222,12 +223,21 @@ function geographicPolygonArea(points: GeoPoint[]) {
 }
 
 let googleMapsPromise: Promise<GoogleMapsNamespace> | null = null;
+let googleMapsAuthFailed = false;
+const googleMapsAuthFailureListeners = new Set<() => void>();
 
 function loadGoogleMaps(apiKey: string) {
+  if (googleMapsAuthFailed) {
+    return Promise.reject(new Error("Google Maps authentication failed."));
+  }
   if (window.google?.maps) return Promise.resolve(window.google.maps);
   if (googleMapsPromise) return googleMapsPromise;
 
   googleMapsPromise = new Promise<GoogleMapsNamespace>((resolve, reject) => {
+    window.gm_authFailure = () => {
+      googleMapsAuthFailed = true;
+      googleMapsAuthFailureListeners.forEach((listener) => listener());
+    };
     window.__envisionGoogleMapsReady = () => {
       if (window.google?.maps) resolve(window.google.maps);
       else reject(new Error("Google Maps loaded without a maps namespace."));
@@ -301,9 +311,11 @@ function PlaceSearch({
       if (!active) return;
       setStatus("error");
       onSearchError(
-        "Property search is unavailable. Enable Places API (New) for this key, then try again.",
+        "Property search is temporarily unavailable. You can still enter coordinates manually.",
       );
     };
+
+    googleMapsAuthFailureListeners.add(handleError);
 
     loadGoogleMaps(apiKey)
       .then((maps) => maps.importLibrary("places"))
@@ -330,6 +342,7 @@ function PlaceSearch({
 
     return () => {
       active = false;
+      googleMapsAuthFailureListeners.delete(handleError);
       autocomplete?.removeEventListener("gmp-select", handleSelect);
       autocomplete?.removeEventListener("gmp-error", handleError);
       autocompleteRef.current = null;
@@ -347,7 +360,7 @@ function PlaceSearch({
       <input
         aria-label="Property search unavailable"
         disabled
-        placeholder="Enable Places API (New) to search"
+        placeholder="Search temporarily unavailable"
       />
     );
   }
@@ -692,7 +705,15 @@ function HybridMap({
   useEffect(() => {
     if (!apiKey || !containerRef.current) return;
     let active = true;
+    let tilesTimer: number | undefined;
     const listeners: GoogleMapsListener[] = [];
+    const handleAuthFailure = () => {
+      if (!active) return;
+      if (tilesTimer) window.clearTimeout(tilesTimer);
+      setMapStatus("error");
+    };
+
+    googleMapsAuthFailureListeners.add(handleAuthFailure);
 
     loadGoogleMaps(apiKey)
       .then((maps) => {
@@ -758,7 +779,16 @@ function HybridMap({
           polygon.addListener("dragend", () => syncPath(polygon)),
           polyline.addListener("mouseup", () => syncPath(polyline)),
         );
-        setMapStatus("ready");
+        tilesTimer = window.setTimeout(() => {
+          if (active) setMapStatus("error");
+        }, 10_000);
+        listeners.push(
+          map.addListener("tilesloaded", () => {
+            if (!active) return;
+            if (tilesTimer) window.clearTimeout(tilesTimer);
+            setMapStatus("ready");
+          }),
+        );
       })
       .catch(() => {
         if (active) setMapStatus("error");
@@ -766,6 +796,8 @@ function HybridMap({
 
     return () => {
       active = false;
+      googleMapsAuthFailureListeners.delete(handleAuthFailure);
+      if (tilesTimer) window.clearTimeout(tilesTimer);
       listeners.forEach((listener) => listener.remove());
       polygonRef.current?.setMap(null);
       polylineRef.current?.setMap(null);
@@ -814,8 +846,8 @@ function HybridMap({
           showPanels={false}
         />
         <div className="map-key-note">
-          <strong>Google hybrid map integration ready</strong>
-          <span>A restricted Maps JavaScript API key is required to display live map tiles.</span>
+          <strong>Satellite map temporarily unavailable</strong>
+          <span>Use the planning canvas for now, or try again later. Your traced area and estimate remain available.</span>
         </div>
       </div>
     );

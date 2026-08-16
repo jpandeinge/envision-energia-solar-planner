@@ -52,6 +52,9 @@ test("keeps supplier evidence and product metadata in the app", async () => {
   assert.match(catalogue, /JKM475M-7RL3/);
   assert.match(planner, /NEXT_PUBLIC_GOOGLE_MAPS_API_KEY/);
   assert.match(planner, /MapTypeId\.HYBRID/);
+  assert.match(planner, /gm_authFailure/);
+  assert.match(planner, /tilesloaded/);
+  assert.match(planner, /Satellite map temporarily unavailable/);
   assert.match(planner, /`N\$\$\{nadNumber\.format\(value\)\}`/);
   assert.match(layout, /openGraph/);
   assert.match(layout, /\/og\.png/);

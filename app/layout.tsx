@@ -25,12 +25,12 @@ export async function generateMetadata(): Promise<Metadata> {
     description,
     icons: {
       icon: [
-        { url: "/favicon-16.png", sizes: "16x16", type: "image/png" },
-        { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
-        { url: "/favicon-192.png", sizes: "192x192", type: "image/png" },
+        { url: "/favicon-16.png?v=20260816-blue", sizes: "16x16", type: "image/png" },
+        { url: "/favicon-32.png?v=20260816-blue", sizes: "32x32", type: "image/png" },
+        { url: "/favicon-192.png?v=20260816-blue", sizes: "192x192", type: "image/png" },
       ],
-      shortcut: "/favicon-32.png",
-      apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+      shortcut: "/favicon-32.png?v=20260816-blue",
+      apple: [{ url: "/apple-touch-icon.png?v=20260816-blue", sizes: "180x180", type: "image/png" }],
     },
     alternates: { canonical: siteUrl },
     openGraph: {
