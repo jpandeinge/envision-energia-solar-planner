@@ -13,6 +13,11 @@ type Point = { x: number; y: number };
 type GeoPoint = { lat: number; lng: number };
 type Goal = "grid" | "hybrid" | "offgrid";
 type InstallType = "roof" | "ground";
+type SurfaceSnapshot = {
+  points: Point[];
+  geoPoints: GeoPoint[];
+  closed: boolean;
+};
 
 type GoogleMapClickEvent = {
   latLng?: { lat: () => number; lng: () => number };
@@ -40,6 +45,7 @@ type GooglePlacesLibrary = {
 };
 
 type GoogleMapsListener = { remove: () => void };
+type GoogleMVCArray<T> = { getArray: () => T[] };
 type GoogleMapInstance = {
   addListener: (
     eventName: string,
@@ -48,16 +54,23 @@ type GoogleMapInstance = {
   setCenter: (center: GeoPoint) => void;
 };
 type GooglePolygonInstance = {
+  addListener: (
+    eventName: string,
+    handler: (event: GoogleMapClickEvent) => void,
+  ) => GoogleMapsListener;
+  getPath: () => GoogleMVCArray<GoogleLatLng>;
   setMap: (map: GoogleMapInstance | null) => void;
   setOptions: (options: Record<string, unknown>) => void;
   setPath: (path: GeoPoint[]) => void;
 };
+type GooglePolylineInstance = GooglePolygonInstance;
 type GoogleMapsNamespace = {
   Map: new (
     element: HTMLElement,
     options: Record<string, unknown>,
   ) => GoogleMapInstance;
   Polygon: new (options: Record<string, unknown>) => GooglePolygonInstance;
+  Polyline: new (options: Record<string, unknown>) => GooglePolylineInstance;
   MapTypeId: { HYBRID: string };
   importLibrary: (libraryName: "places") => Promise<GooglePlacesLibrary>;
 };
@@ -236,7 +249,7 @@ function PlaceSearch({
       .then(({ PlaceAutocompleteElement }) => {
         if (!active || !hostRef.current) return;
         autocomplete = new PlaceAutocompleteElement();
-        autocomplete.placeholder = "Search a Namibian address or place";
+        autocomplete.placeholder = "Search a Namibian address or place…";
         autocomplete.includedRegionCodes = ["na"];
         autocomplete.locationBias = {
           center: initialCenterRef.current,
@@ -514,8 +527,9 @@ function HybridMap({
   closed,
   setClosed,
   drawing,
+  editable,
   installType,
-  compact = false,
+  panelCount,
 }: {
   center: GeoPoint;
   geoPoints: GeoPoint[];
@@ -525,17 +539,20 @@ function HybridMap({
   closed: boolean;
   setClosed: (closed: boolean) => void;
   drawing: boolean;
+  editable: boolean;
   installType: InstallType;
-  compact?: boolean;
+  panelCount?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const polygonRef = useRef<GooglePolygonInstance | null>(null);
-  const mapsRef = useRef<GoogleMapsNamespace | null>(null);
+  const polylineRef = useRef<GooglePolylineInstance | null>(null);
   const initialCenterRef = useRef(center);
+  const initialInstallTypeRef = useRef(installType);
   const geoPointsRef = useRef(geoPoints);
   const drawingRef = useRef(drawing);
   const closedRef = useRef(closed);
+  const editableRef = useRef(editable);
   const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -548,46 +565,78 @@ function HybridMap({
   useEffect(() => {
     drawingRef.current = drawing;
     closedRef.current = closed;
-  }, [closed, drawing]);
+    editableRef.current = editable;
+  }, [closed, drawing, editable]);
 
   useEffect(() => {
     if (!apiKey || !containerRef.current) return;
     let active = true;
-    let clickListener: GoogleMapsListener | null = null;
+    const listeners: GoogleMapsListener[] = [];
 
     loadGoogleMaps(apiKey)
       .then((maps) => {
         if (!active || !containerRef.current) return;
-        mapsRef.current = maps;
         const map = new maps.Map(containerRef.current, {
           center: initialCenterRef.current,
-          zoom: compact ? 19 : 20,
+          zoom: 20,
           mapTypeId: maps.MapTypeId.HYBRID,
           mapTypeControl: true,
           mapTypeControlOptions: { position: 3 },
           streetViewControl: false,
-          fullscreenControl: !compact,
+          fullscreenControl: true,
           clickableIcons: false,
           gestureHandling: "greedy",
         });
         mapRef.current = map;
-        polygonRef.current = new maps.Polygon({
-          map,
+        const initialColor =
+          initialInstallTypeRef.current === "roof" ? "#146ef5" : "#dff26b";
+        const polygon = new maps.Polygon({
+          map: closedRef.current ? map : null,
           paths: geoPointsRef.current,
-          strokeColor: installType === "roof" ? "#a8ccff" : "#dff26b",
+          strokeColor:
+            initialInstallTypeRef.current === "roof" ? "#a8ccff" : "#dff26b",
           strokeOpacity: 1,
           strokeWeight: 4,
-          fillColor: installType === "roof" ? "#146ef5" : "#dff26b",
-          fillOpacity: closedRef.current ? 0.28 : 0.12,
-          clickable: false,
+          fillColor: initialColor,
+          fillOpacity: 0.28,
+          clickable: editableRef.current,
+          draggable: editableRef.current,
+          editable: editableRef.current,
         });
-        clickListener = map.addListener("click", (event) => {
+        const polyline = new maps.Polyline({
+          map: closedRef.current ? null : map,
+          path: geoPointsRef.current,
+          strokeColor:
+            initialInstallTypeRef.current === "roof" ? "#a8ccff" : "#dff26b",
+          strokeOpacity: 1,
+          strokeWeight: 4,
+          clickable: true,
+          editable: drawingRef.current,
+        });
+        polygonRef.current = polygon;
+        polylineRef.current = polyline;
+
+        const syncPath = (overlay: GooglePolygonInstance) => {
+          if (!editableRef.current && !drawingRef.current) return;
+          const nextPoints = overlay
+            .getPath()
+            .getArray()
+            .map((point) => ({ lat: point.lat(), lng: point.lng() }));
+          if (nextPoints.length > 0) setGeoPoints(nextPoints);
+        };
+
+        listeners.push(map.addListener("click", (event) => {
           if (!drawingRef.current || closedRef.current || !event.latLng) return;
           setGeoPoints([
             ...geoPointsRef.current,
             { lat: event.latLng.lat(), lng: event.latLng.lng() },
           ]);
-        });
+        }));
+        listeners.push(
+          polygon.addListener("mouseup", () => syncPath(polygon)),
+          polygon.addListener("dragend", () => syncPath(polygon)),
+          polyline.addListener("mouseup", () => syncPath(polyline)),
+        );
         setMapStatus("ready");
       })
       .catch(() => {
@@ -596,29 +645,43 @@ function HybridMap({
 
     return () => {
       active = false;
-      clickListener?.remove();
+      listeners.forEach((listener) => listener.remove());
       polygonRef.current?.setMap(null);
+      polylineRef.current?.setMap(null);
       polygonRef.current = null;
+      polylineRef.current = null;
       mapRef.current = null;
     };
-  }, [apiKey, compact, installType, setGeoPoints]);
+  }, [apiKey, setGeoPoints]);
 
   useEffect(() => {
     mapRef.current?.setCenter(center);
   }, [center]);
 
   useEffect(() => {
+    const map = mapRef.current;
     polygonRef.current?.setPath(geoPoints);
     polygonRef.current?.setOptions({
-      fillOpacity: closed ? 0.28 : 0.12,
       strokeColor: installType === "roof" ? "#a8ccff" : "#dff26b",
       fillColor: installType === "roof" ? "#146ef5" : "#dff26b",
+      clickable: editable,
+      draggable: editable,
+      editable,
     });
-  }, [closed, geoPoints, installType]);
+    polygonRef.current?.setMap(closed ? map : null);
+
+    polylineRef.current?.setPath(geoPoints);
+    polylineRef.current?.setOptions({
+      strokeColor: installType === "roof" ? "#a8ccff" : "#dff26b",
+      clickable: drawing,
+      editable: drawing,
+    });
+    polylineRef.current?.setMap(closed ? null : map);
+  }, [closed, drawing, editable, geoPoints, installType]);
 
   if (!apiKey || mapStatus === "error") {
     return (
-      <div className={compact ? "hybrid-map-fallback is-compact" : "hybrid-map-fallback"}>
+      <div className="hybrid-map-fallback">
         <SiteCanvas
           points={points}
           setPoints={setPoints}
@@ -638,11 +701,14 @@ function HybridMap({
   }
 
   return (
-    <div className={compact ? "google-map-shell is-compact" : "google-map-shell"}>
-      <div ref={containerRef} className="google-map" aria-label="Google hybrid satellite map" />
+    <div className="google-map-shell">
+      <div ref={containerRef} className="google-map" aria-label="Interactive Google hybrid satellite map" />
       {mapStatus === "loading" ? <div className="map-loading">Loading hybrid imagery…</div> : null}
-      {drawing && !closed ? <div className="canvas-tip">Tap each corner, then choose “Close shape”</div> : null}
-      <div className="google-map-badge"><span className="status-dot" /> Hybrid · interactive</div>
+      {drawing && !closed ? <div className="canvas-tip">Tap roof corners · drag a handle to refine</div> : null}
+      <div className="google-map-badge">
+        <span className="status-dot" />
+        {panelCount ? `${panelCount} panels · live site` : "Hybrid · interactive"}
+      </div>
     </div>
   );
 }
@@ -653,6 +719,9 @@ export function SolarPlanner() {
   const [geoPoints, setGeoPoints] = useState<GeoPoint[]>(defaultGeoSurface);
   const [closed, setClosed] = useState(true);
   const [drawing, setDrawing] = useState(false);
+  const [editingSurface, setEditingSurface] = useState(false);
+  const [discardedSurface, setDiscardedSurface] =
+    useState<SurfaceSnapshot | null>(null);
   const [installType, setInstallType] = useState<InstallType>("roof");
   const [latitude, setLatitude] = useState("-22.5609");
   const [longitude, setLongitude] = useState("17.0658");
@@ -666,6 +735,15 @@ export function SolarPlanner() {
   const [backupHours, setBackupHours] = useState(6);
   const [criticalLoad, setCriticalLoad] = useState(1.8);
   const [locationMessage, setLocationMessage] = useState("");
+  const surfaceRef = useRef<SurfaceSnapshot>({
+    points: defaultSurface,
+    geoPoints: defaultGeoSurface,
+    closed: true,
+  });
+
+  useEffect(() => {
+    surfaceRef.current = { points, geoPoints, closed };
+  }, [closed, geoPoints, points]);
 
   const mapCenter = useMemo(
     () => ({
@@ -682,6 +760,7 @@ export function SolarPlanner() {
   const usableArea = rawArea * usableRatio;
   const panelArea = PANEL_WIDTH_METRES * PANEL_HEIGHT_METRES * 1.16;
   const maxPanels = Math.max(0, Math.floor(usableArea / panelArea));
+  const pointCount = geoPoints.length || points.length;
 
   const results = useMemo(() => {
     const targetShare = goal === "grid" ? 0.76 : goal === "hybrid" ? 0.92 : 1.15;
@@ -727,10 +806,15 @@ export function SolarPlanner() {
   }, [backupHours, criticalLoad, goal, maxPanels, monthlyKwh]);
 
   const resetSurface = useCallback(() => {
+    const currentSurface = surfaceRef.current;
+    if (currentSurface.points.length > 0 || currentSurface.geoPoints.length > 0) {
+      setDiscardedSurface(currentSurface);
+    }
     setPoints([]);
     setGeoPoints([]);
     setClosed(false);
     setDrawing(true);
+    setEditingSurface(false);
   }, []);
 
   const useDemoSurface = useCallback(() => {
@@ -738,6 +822,55 @@ export function SolarPlanner() {
     setGeoPoints(defaultGeoSurface);
     setClosed(true);
     setDrawing(false);
+    setEditingSurface(false);
+    setDiscardedSurface(null);
+    setStep(1);
+  }, []);
+
+  const restoreSurface = useCallback(() => {
+    if (!discardedSurface) return;
+    setPoints(discardedSurface.points);
+    setGeoPoints(discardedSurface.geoPoints);
+    setClosed(discardedSurface.closed);
+    setDrawing(!discardedSurface.closed);
+    setEditingSurface(false);
+    setDiscardedSurface(null);
+  }, [discardedSurface]);
+
+  const undoLastPoint = useCallback(() => {
+    if (geoPoints.length > 0) {
+      const nextPoints = geoPoints.slice(0, -1);
+      setGeoPoints(nextPoints);
+      if (nextPoints.length < 3) {
+        setClosed(false);
+        setDrawing(true);
+        setEditingSurface(false);
+      }
+      return;
+    }
+
+    if (points.length > 0) {
+      const nextPoints = points.slice(0, -1);
+      setPoints(nextPoints);
+      if (nextPoints.length < 3) {
+        setClosed(false);
+        setDrawing(true);
+        setEditingSurface(false);
+      }
+    }
+  }, [geoPoints, points]);
+
+  const finishOutline = useCallback(() => {
+    if (geoPoints.length < 3 && points.length < 3) return;
+    setClosed(true);
+    setDrawing(false);
+    setEditingSurface(false);
+  }, [geoPoints.length, points.length]);
+
+  const editOutline = useCallback(() => {
+    setClosed(true);
+    setDrawing(false);
+    setEditingSurface(true);
   }, []);
 
   const selectPropertyLocation = useCallback(
@@ -749,6 +882,9 @@ export function SolarPlanner() {
       setGeoPoints([]);
       setClosed(false);
       setDrawing(true);
+      setEditingSurface(false);
+      setDiscardedSurface(null);
+      setStep(1);
       setLocationMessage(`${label} selected. Trace the usable installation area.`);
     },
     [],
@@ -780,6 +916,8 @@ export function SolarPlanner() {
   };
 
   const goToStep = (nextStep: number) => {
+    if (nextStep > 1 && (!closed || rawArea < 10)) return;
+    if (nextStep !== 1) setEditingSurface(false);
     setStep(nextStep);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -829,6 +967,7 @@ export function SolarPlanner() {
               className={item.number === step ? "step is-active" : item.number < step ? "step is-done" : "step"}
               type="button"
               onClick={() => goToStep(item.number)}
+              disabled={item.number > 1 && (!closed || rawArea < 10)}
               aria-current={item.number === step ? "step" : undefined}
             >
               <span>{item.number < step ? "✓" : item.number}</span>
@@ -837,9 +976,9 @@ export function SolarPlanner() {
           ))}
         </nav>
 
-        {step === 1 ? (
-          <section className="planner-grid" aria-labelledby="site-title">
-            <div className="map-card">
+        <div className={`journey-grid journey-step-${step}`}>
+          <section className="journey-map-column" aria-label="Live property map">
+            <div className="map-card journey-map-card">
               <div className="map-toolbar">
                 <div className="search-field search-field-places">
                   <PlaceSearch
@@ -852,6 +991,7 @@ export function SolarPlanner() {
                   ◎
                 </button>
               </div>
+
               <HybridMap
                 center={mapCenter}
                 geoPoints={geoPoints}
@@ -861,17 +1001,76 @@ export function SolarPlanner() {
                 closed={closed}
                 setClosed={(value) => {
                   setClosed(value);
-                  if (value) setDrawing(false);
+                  if (value) {
+                    setDrawing(false);
+                    setEditingSurface(false);
+                  }
                 }}
-                drawing={drawing}
+                drawing={step === 1 && drawing}
+                editable={step === 1 && editingSurface}
                 installType={installType}
+                panelCount={step >= 3 ? results.panels : undefined}
               />
+
+              <div className="map-edit-bar">
+                <div className="map-edit-status" role="status" aria-live="polite">
+                  <strong>
+                    {step !== 1
+                      ? "Site locked to this estimate"
+                      : editingSurface
+                        ? "Outline unlocked"
+                        : closed
+                          ? "Outline complete"
+                          : `${pointCount} ${pointCount === 1 ? "corner" : "corners"} marked`}
+                  </strong>
+                  <span>
+                    {step !== 1
+                      ? `${number.format(usableArea)} m² usable · ${maxPanels} panel physical limit`
+                      : editingSurface
+                        ? "Drag corner handles or move the complete shape."
+                        : closed
+                          ? `${number.format(rawArea)} m² traced · edit whenever needed`
+                          : "Tap each corner of the usable roof or ground area."}
+                  </span>
+                </div>
+
+                <div className="map-edit-actions" role="toolbar" aria-label="Outline editing controls">
+                  {step === 1 ? (
+                    <>
+                      {discardedSurface && pointCount === 0 ? (
+                        <button className="button button-map" type="button" onClick={restoreSurface}>Undo reset</button>
+                      ) : null}
+                      {pointCount > 0 && !drawing && !editingSurface ? (
+                        <button className="button button-map" type="button" onClick={resetSurface}>Replace outline</button>
+                      ) : null}
+                      {(drawing || editingSurface) && pointCount > 0 ? (
+                        <button className="button button-map" type="button" onClick={undoLastPoint}>Undo corner</button>
+                      ) : null}
+                      {!closed ? (
+                        <button className="button button-map is-primary" type="button" disabled={pointCount < 3} onClick={finishOutline}>Finish outline</button>
+                      ) : editingSurface ? (
+                        <button className="button button-map is-primary" type="button" onClick={finishOutline}>Finish editing</button>
+                      ) : (
+                        <button className="button button-map is-primary" type="button" onClick={editOutline}>Edit outline</button>
+                      )}
+                    </>
+                  ) : (
+                    <button className="button button-map is-primary" type="button" onClick={() => goToStep(1)}>Edit site outline</button>
+                  )}
+                </div>
+              </div>
+
               <div className="map-footer">
                 <span>{locationName} · {latitude}, {longitude}</span>
-                <span>Hybrid imagery · map content refresh dates vary by location</span>
+                <span>One live hybrid map · preserved across every step</span>
               </div>
             </div>
+          </section>
 
+          <div className="journey-content">
+
+        {step === 1 ? (
+          <section className="site-step" aria-labelledby="site-title">
             <aside className="control-card">
               <div className="section-number">01</div>
               <p className="eyebrow">Installation space</p>
@@ -912,14 +1111,7 @@ export function SolarPlanner() {
                 <div><span>Estimated panel capacity</span><strong>Up to {maxPanels || "—"}</strong></div>
               </div>
 
-              <div className="drawing-actions">
-                <button className="button button-secondary" type="button" onClick={resetSurface}>Draw again</button>
-                {!closed && (geoPoints.length >= 3 || points.length >= 3) ? (
-                  <button className="button button-secondary" type="button" onClick={() => { setClosed(true); setDrawing(false); }}>Close shape</button>
-                ) : null}
-              </div>
-
-              <button className="button button-primary button-full" type="button" disabled={!closed || rawArea < 10} onClick={() => goToStep(2)}>
+              <button className="button button-primary button-full" type="button" disabled={!closed || editingSurface || rawArea < 10} onClick={() => goToStep(2)}>
                 Continue to energy use <span>→</span>
               </button>
               <p className="fine-print">A 22% roof allowance covers edges, access paths and small obstructions. Refine it during a site survey.</p>
@@ -982,9 +1174,6 @@ export function SolarPlanner() {
             <aside className="context-card">
               <span className="context-kicker">Your site</span>
               <h3>{locationName}</h3>
-              <div className="mini-site">
-                <HybridMap center={mapCenter} geoPoints={geoPoints} setGeoPoints={setGeoPoints} points={points} setPoints={setPoints} closed={closed} setClosed={setClosed} drawing={false} installType={installType} compact />
-              </div>
               <dl className="context-stats">
                 <div><dt>Usable surface</dt><dd>{number.format(usableArea)} m²</dd></div>
                 <div><dt>Physical limit</dt><dd>{maxPanels} panels</dd></div>
@@ -1013,7 +1202,11 @@ export function SolarPlanner() {
             <div className="result-grid">
               <div className="layout-card">
                 <div className="card-heading-row"><div><p className="eyebrow">Surface layout</p><h3>{results.panels} full-size panels</h3></div><span className="capacity-badge">{number.format(results.capacityKwp)} kWp</span></div>
-                <SiteCanvas points={points} setPoints={setPoints} closed={closed} setClosed={setClosed} drawing={false} installType={installType} panelCount={results.panels} showPanels />
+                <div className="physical-fit-visual">
+                  <div><span>{results.panels}</span><small>panels selected</small></div>
+                  <div><span>{number.format(usableArea)} m²</span><small>usable surface</small></div>
+                  <div><span>{maxPanels}</span><small>panel physical limit</small></div>
+                </div>
                 <div className="layout-note"><span>Indicative placement</span><span>{number.format(usableArea - results.panels * panelArea)} m² estimated reserve</span></div>
               </div>
 
@@ -1102,6 +1295,8 @@ export function SolarPlanner() {
             </div>
           </section>
         ) : null}
+          </div>
+        </div>
       </section>
 
       <footer className="footer">

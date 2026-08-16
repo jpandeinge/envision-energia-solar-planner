@@ -41,6 +41,7 @@ select {
 button,
 a {
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 button:focus-visible,
@@ -329,6 +330,12 @@ h1 {
   border-right: 0;
 }
 
+.step:disabled {
+  color: #a9afac;
+  cursor: not-allowed;
+  background: rgba(240, 241, 236, 0.55);
+}
+
 .step > span {
   display: grid;
   place-items: center;
@@ -379,6 +386,36 @@ h1 {
   align-items: stretch;
 }
 
+.journey-grid {
+  display: grid;
+  grid-template-columns: minmax(390px, 0.78fr) minmax(0, 1.32fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.journey-map-column,
+.journey-content,
+.site-step {
+  min-width: 0;
+}
+
+.journey-map-column {
+  position: sticky;
+  top: 20px;
+}
+
+.journey-content .details-layout {
+  grid-template-columns: 1fr;
+}
+
+.journey-content .context-card {
+  margin-top: 18px;
+}
+
+.journey-content .result-hero h2 {
+  font-size: clamp(32px, 3.5vw, 52px);
+}
+
 .map-card,
 .control-card,
 .form-card,
@@ -395,6 +432,10 @@ h1 {
   position: relative;
   min-width: 0;
   padding: 13px;
+}
+
+.journey-map-card {
+  box-shadow: 0 24px 70px rgba(22, 40, 32, 0.12);
 }
 
 .map-toolbar {
@@ -432,6 +473,11 @@ h1 {
   border: 0;
   outline: 0;
   background: transparent;
+}
+
+.search-field:focus-within {
+  outline: 3px solid rgba(20, 110, 245, 0.32);
+  outline-offset: 2px;
 }
 
 .search-field-places {
@@ -652,6 +698,65 @@ h1 {
   color: var(--ink-soft);
   font-family: var(--font-geist-mono), monospace;
   font-size: 9px;
+}
+
+.map-edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 2px 3px;
+}
+
+.map-edit-status {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.map-edit-status strong {
+  font-size: 11px;
+}
+
+.map-edit-status span {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-edit-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.button-map {
+  min-height: 36px;
+  padding: 0 11px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  background: #f5f6f2;
+  border-color: var(--line);
+}
+
+.button-map:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.button-map.is-primary {
+  color: white;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.button-map.is-primary:hover:not(:disabled) {
+  color: white;
+  background: var(--blue-dark);
 }
 
 .control-card,
@@ -1083,6 +1188,47 @@ select {
   height: 360px;
 }
 
+.physical-fit-visual {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+  min-height: 230px;
+  padding: 16px;
+  background:
+    linear-gradient(rgba(20, 110, 245, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 110, 245, 0.07) 1px, transparent 1px),
+    #f3f7fd;
+  background-size: 24px 24px;
+  border: 1px solid #d8e5f7;
+  border-radius: 11px;
+}
+
+.physical-fit-visual > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 17px;
+  color: white;
+  background: linear-gradient(145deg, #1c65c7, #0e3e78);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 9px;
+  box-shadow: 0 14px 28px rgba(17, 72, 139, 0.16);
+}
+
+.physical-fit-visual span {
+  overflow-wrap: anywhere;
+  font-size: clamp(21px, 2.2vw, 32px);
+  font-weight: 760;
+  letter-spacing: -0.045em;
+}
+
+.physical-fit-visual small {
+  margin-top: 7px;
+  color: #d7e9ff;
+  font-size: 9px;
+}
+
 .layout-note {
   display: flex;
   justify-content: space-between;
@@ -1423,10 +1569,15 @@ select {
 }
 
 @media (max-width: 1040px) {
+  .journey-grid,
   .planner-grid,
   .details-layout,
   .result-grid {
     grid-template-columns: 1fr;
+  }
+
+  .journey-map-column {
+    position: static;
   }
 
   .context-card {
@@ -1524,11 +1675,34 @@ select {
     gap: 4px;
   }
 
+  .map-edit-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .map-edit-status span {
+    white-space: normal;
+  }
+
+  .map-edit-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .button-map:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
   .coordinate-grid,
   .metric-inputs,
   .goal-grid,
-  .outcome-grid {
+  .outcome-grid,
+  .physical-fit-visual {
     grid-template-columns: 1fr;
+  }
+
+  .physical-fit-visual {
+    min-height: auto;
   }
 
   .goal-card {
